@@ -1,0 +1,30 @@
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra -q --html=reports/report.html --self-contained-html"
+testpaths = ["tests"]
+markers = [
+    "sanity: quick per-API happy-path check, narrower than smoke",
+    "smoke: critical path checks, run on every commit",
+    "regression: full regression suite",
+    "auth: authentication and authorization tests",
+    "negative: negative/edge-case scenarios",
+    "farmer: farmer module tests",
+    "asset: asset module tests",
+    "plantype: plan type module tests",
+    "crop_variety: crop variety module tests",
+    "project: project module tests",
+    "plan: plan module tests",
+]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+disallow_untyped_defs = false

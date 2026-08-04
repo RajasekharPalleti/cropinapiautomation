@@ -1,0 +1,393 @@
+{
+  "data": {
+    "standardAttributes": [
+      "PLAN_NAME",
+      "DESCRIPTION",
+      "FARM_RESOURCE",
+      "GOOD_PRACTICES",
+      "ATTACH_IMAGE",
+      "UPLOAD_PDF",
+      "VIDEO_URL",
+      "CAPTURE_GEO_LOCATION",
+      "CAPTURE_SIGNATURE",
+      "CADENCE_TYPE",
+      "DATE_OF_ACTION",
+      "REFERENCE_DATE",
+      "ACTION_TO_BE_COMPLETED_IN_ DAYS"
+    ],
+    "customAttributes": [
+      {
+        "name": "Textattri0",
+        "type": "Text",
+        "label": "Text attribute 1",
+        "condition": false,
+        "hasCalculation": false,
+        "validation": {
+          "fixed": false,
+          "required": false,
+          "multiple": false
+        },
+        "hidden": false
+      },
+      {
+        "name": "Dropdowna1",
+        "type": "Drop down",
+        "label": "Dropdown attribute 2",
+        "options": ["1", "2", "3", "4"],
+        "condition": false,
+        "hasCalculation": false,
+        "validation": {
+          "fixed": false,
+          "required": false,
+          "multiple": false
+        },
+        "hidden": false
+      },
+      {
+        "name": "Smartcomp2",
+        "type": "Text",
+        "label": "Smartcompute attribute 3",
+        "condition": true,
+        "hasCalculation": true,
+        "validation": {
+          "fixed": false,
+          "required": false,
+          "multiple": false
+        },
+        "hidden": false,
+        "dependentOn": "Dropdowna1",
+        "dependentOnSelectedValue": "1",
+        "calculationAttributes": ["a.name"],
+        "calculationFunction": "function calculateFormula(Asset_name){ return Asset_name;}",
+        "viewFormula": "assetname",
+        "varMap": {},
+        "isEditable": false,
+        "aliasVariableObj": [
+          {
+            "alias": "Asset_name",
+            "value": "assetname",
+            "path": "a.name",
+            "isRecurssive": false
+          }
+        ],
+        "formulaName": "",
+        "calculationSource": "Default"
+      }
+    ],
+    "columnHeaderAttributes": [
+      {
+        "type": "select",
+        "style": {},
+        "addNew": true,
+        "addUrl": "",
+        "apiUrl": "master/api/chemical-types",
+        "controls": "",
+        "validation": {
+          "fixed": true,
+          "mandatory": true,
+          "selected": true
+        },
+        "valueToSave": "id",
+        "masterDataKey": "chemical_type",
+        "valueToDisplay": "name",
+        "hideSmartCompute": true,
+        "hidden": false,
+        "display_value": "typeId",
+        "display_name": "CHEMICAL_TYPE"
+      },
+      {
+        "type": "select",
+        "style": {},
+        "addNew": false,
+        "addUrl": "farm/api/chemical-details",
+        "apiUrl": "farm/api/chemical-details/chemical-type",
+        "controls": "",
+        "validation": {
+          "fixed": true,
+          "mandatory": true,
+          "selected": true
+        },
+        "valueToSave": "id",
+        "masterDataKey": "chemical_details",
+        "valueDependent": "typeId",
+        "valueToDisplay": "name",
+        "hideSmartCompute": true,
+        "hidden": false,
+        "display_value": "chemicalName",
+        "display_name": "CHEMICAL_NAME"
+      },
+      {
+        "type": "select",
+        "options": [
+          {"name": "Per Area", "value": "perArea"},
+          {"name": "Per Plant", "value": "perPlant"}
+        ],
+        "planOnly": true,
+        "validation": {
+          "mandatory": false,
+          "selected": true
+        },
+        "valueToSave": "value",
+        "dependentAtr": "totalChemicalQuantity",
+        "valueToDisplay": "name",
+        "additionalHeaderInformation": "areaUnits",
+        "hideSmartCompute": true,
+        "hidden": false,
+        "display_value": "perQuantity",
+        "display_name": "PER_QUANTITY"
+      },
+      {
+        "type": "units",
+        "style": {},
+        "apiUrl": "master/api/constants?name=chemicalquantityunit",
+        "options": [],
+        "controls": "",
+        "validation": {
+          "fixed": false,
+          "mandatory": false,
+          "selected": true
+        },
+        "constantDataKey": "chemical_quantity_units",
+        "enableUnitConversion": true,
+        "hideSmartCompute": true,
+        "hidden": false,
+        "display_value": "chemicalQuantity",
+        "display_name": "CHEMICAL_QUANTITY"
+      },
+      {
+        "type": "units",
+        "style": {},
+        "apiUrl": "master/api/constants?name=concentrationunit",
+        "options": [],
+        "controls": "",
+        "cachedData": true,
+        "validation": {
+          "fixed": false,
+          "mandatory": false,
+          "selected": true
+        },
+        "valueDependent": "chemicalQuantity",
+        "constantDataKey": "chemical_concentration_units",
+        "hideSmartCompute": true,
+        "hidden": false,
+        "display_value": "chemicalConcentration",
+        "display_name": "CHEMICAL_CONCENTRATION"
+      },
+      {
+        "type": "units",
+        "apiUrl": "master/api/constants?name=chemicalquantityunit",
+        "validation": {
+          "fixed": false,
+          "mandatory": false,
+          "selected": true
+        },
+        "dependentOn": ["perQuantity"],
+        "disableUnit": true,
+        "hasCalculation": true,
+        "constantDataKey": "total_chemical_quantity_units",
+        "calculationFunction": "function calculateFormula(cropUnits, causableAreacount, chemicalQuantity, perQuantity,applicationArea) { var obj = {};if (perQuantity) {if (perQuantity === 'perArea'){ if (causableAreacount && chemicalQuantity.count && applicationArea) {obj.count = (causableAreacount * chemicalQuantity.count)*applicationArea/100;}else{obj.count = (causableAreacount * chemicalQuantity.count)}}else if (perQuantity === 'perPlant'){if (cropUnits && chemicalQuantity.count && applicationArea){obj.count = (cropUnits * chemicalQuantity.count)*applicationArea/100;}else{obj.count = (cropUnits * chemicalQuantity.count)}}if (chemicalQuantity.unit){obj.unit = chemicalQuantity.unit;}return obj;}}",
+        "enableUnitConversion": true,
+        "calculationAttributes": [
+          "ca.cropUnits",
+          "ca.usableArea.count",
+          "pt.this.data.planHeaderAttributesEntered.chemicalQuantity",
+          "pt.this.data.planHeaderAttributesEntered.perQuantity",
+          "pt.this.data.planHeaderAttributesEntered.applicationArea"
+        ],
+        "hideSmartCompute": true,
+        "hidden": false,
+        "display_value": "totalChemicalQuantity",
+        "display_name": "TOTAL_CHEMICAL_QUANTITY"
+      }
+    ],
+    "columnHeaderGroup": {
+      "groupName": "Chemical Type",
+      "groupList": [
+        {
+          "type": "select",
+          "style": {},
+          "addNew": true,
+          "addUrl": "",
+          "apiUrl": "master/api/chemical-types",
+          "controls": "",
+          "validation": {
+            "fixed": true,
+            "mandatory": true,
+            "selected": true
+          },
+          "valueToSave": "id",
+          "masterDataKey": "chemical_type",
+          "valueToDisplay": "name",
+          "hideSmartCompute": true,
+          "hidden": false,
+          "display_value": "typeId",
+          "display_name": "CHEMICAL_TYPE"
+        },
+        {
+          "type": "select",
+          "style": {},
+          "addNew": false,
+          "addUrl": "farm/api/chemical-details",
+          "apiUrl": "farm/api/chemical-details/chemical-type",
+          "controls": "",
+          "validation": {
+            "fixed": true,
+            "mandatory": true,
+            "selected": true
+          },
+          "valueToSave": "id",
+          "masterDataKey": "chemical_details",
+          "valueDependent": "typeId",
+          "valueToDisplay": "name",
+          "hideSmartCompute": true,
+          "hidden": false,
+          "display_value": "chemicalName",
+          "display_name": "CHEMICAL_NAME"
+        },
+        {
+          "type": "select",
+          "options": [
+            {"name": "Per Area", "value": "perArea"},
+            {"name": "Per Plant", "value": "perPlant"}
+          ],
+          "planOnly": true,
+          "validation": {
+            "mandatory": false,
+            "selected": true
+          },
+          "valueToSave": "value",
+          "dependentAtr": "totalChemicalQuantity",
+          "valueToDisplay": "name",
+          "additionalHeaderInformation": "areaUnits",
+          "hideSmartCompute": true,
+          "hidden": false,
+          "display_value": "perQuantity",
+          "display_name": "PER_QUANTITY"
+        },
+        {
+          "type": "units",
+          "style": {},
+          "apiUrl": "master/api/constants?name=chemicalquantityunit",
+          "options": [],
+          "controls": "",
+          "validation": {
+            "fixed": false,
+            "mandatory": false,
+            "selected": true
+          },
+          "constantDataKey": "chemical_quantity_units",
+          "enableUnitConversion": true,
+          "hideSmartCompute": true,
+          "hidden": false,
+          "display_value": "chemicalQuantity",
+          "display_name": "CHEMICAL_QUANTITY"
+        },
+        {
+          "type": "units",
+          "style": {},
+          "apiUrl": "master/api/constants?name=concentrationunit",
+          "options": [],
+          "controls": "",
+          "cachedData": true,
+          "validation": {
+            "fixed": false,
+            "mandatory": false,
+            "selected": true
+          },
+          "valueDependent": "chemicalQuantity",
+          "constantDataKey": "chemical_concentration_units",
+          "hideSmartCompute": true,
+          "hidden": false,
+          "display_value": "chemicalConcentration",
+          "display_name": "CHEMICAL_CONCENTRATION"
+        },
+        {
+          "type": "date",
+          "style": {},
+          "apiUrl": "",
+          "controls": "",
+          "validation": {
+            "fixed": false,
+            "mandatory": false,
+            "selected": false
+          },
+          "hideSmartCompute": true,
+          "hidden": true,
+          "display_value": "date",
+          "display_name": "DATE/DAYS_FROM_SOWING"
+        },
+        {
+          "type": "Percentage",
+          "isEditable": true,
+          "validation": {
+            "fixed": false,
+            "maxValue": 100,
+            "minValue": 0,
+            "mandatory": false,
+            "selected": false
+          },
+          "hideSmartCompute": true,
+          "hidden": true,
+          "display_value": "applicationArea",
+          "display_name": "APPLICATION_AREA"
+        },
+        {
+          "type": "units",
+          "apiUrl": "master/api/constants?name=chemicalquantityunit",
+          "validation": {
+            "fixed": false,
+            "mandatory": false,
+            "selected": true
+          },
+          "dependentOn": ["perQuantity"],
+          "disableUnit": true,
+          "hasCalculation": true,
+          "constantDataKey": "total_chemical_quantity_units",
+          "calculationFunction": "function calculateFormula(cropUnits, causableAreacount, chemicalQuantity, perQuantity,applicationArea) { var obj = {};if (perQuantity) {if (perQuantity === 'perArea'){ if (causableAreacount && chemicalQuantity.count && applicationArea) {obj.count = (causableAreacount * chemicalQuantity.count)*applicationArea/100;}else{obj.count = (causableAreacount * chemicalQuantity.count)}}else if (perQuantity === 'perPlant'){if (cropUnits && chemicalQuantity.count && applicationArea){obj.count = (cropUnits * chemicalQuantity.count)*applicationArea/100;}else{obj.count = (cropUnits * chemicalQuantity.count)}}if (chemicalQuantity.unit){obj.unit = chemicalQuantity.unit;}return obj;}}",
+          "enableUnitConversion": true,
+          "calculationAttributes": [
+            "ca.cropUnits",
+            "ca.usableArea.count",
+            "pt.this.data.planHeaderAttributesEntered.chemicalQuantity",
+            "pt.this.data.planHeaderAttributesEntered.perQuantity",
+            "pt.this.data.planHeaderAttributesEntered.applicationArea"
+          ],
+          "hideSmartCompute": true,
+          "hidden": false,
+          "display_value": "totalChemicalQuantity",
+          "display_name": "TOTAL_CHEMICAL_QUANTITY"
+        },
+        {
+          "type": "units",
+          "apiUrl": "master/api/constants?name=concentrationunit",
+          "cachedData": true,
+          "validation": {
+            "fixed": false,
+            "mandatory": false,
+            "selected": false
+          },
+          "dependentOn": ["chemicalConcentration", "totalChemicalQuantity"],
+          "disableUnit": true,
+          "hasCalculation": true,
+          "valueDependent": "chemicalConcentration",
+          "constantDataKey": "total_chemical_concentration_quantity_units",
+          "calculationFunction": "function calculateFormula(chemicalConcentration, totalChemicalQuantity, totalChemicalConcentrationQuantity) {var obj = {};if (totalChemicalQuantity && chemicalConcentration) {obj.count = chemicalConcentration.count * totalChemicalQuantity.count;}if (totalChemicalConcentrationQuantity) {obj.unit = totalChemicalConcentrationQuantity.unit;} else if (chemicalConcentration.unit) {obj.unit = chemicalConcentration.unit;}return obj;}",
+          "parentDependentValue": "chemicalQuantity",
+          "calculationAttributes": [
+            "pt.this.data.planHeaderAttributesEntered.chemicalConcentration",
+            "pt.this.data.planHeaderAttributesEntered.totalChemicalQuantity",
+            "pt.this.data.planHeaderAttributesEntered.totalChemicalConcentrationQuantity"
+          ],
+          "hideSmartCompute": true,
+          "hidden": true,
+          "display_value": "totalChemicalConcentrationQuantity",
+          "display_name": "TOTAL_CHEMICAL_CONCENTRATION_QUANTITY"
+        }
+      ]
+    }
+  },
+  "id": null,
+  "dataCollection": false,
+  "zoneSampleCollection": false,
+  "name": "Raja api automation plantype"
+}

@@ -1,0 +1,7 @@
+base_url: "https://cloud.cropin.in"
+login_endpoint: "/auth/v1/login"
+timeout_ms: 30000
+default_headers:
+  Content-Type: "application/json"
+  Accept: "application/json"
+sso_base_url: "https://sso.sg.cropin.in"

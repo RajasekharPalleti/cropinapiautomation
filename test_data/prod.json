@@ -1,0 +1,152 @@
+{
+  "login": {
+    "valid": {
+      "tenant_code": "asp",
+      "grant_type": "password",
+      "client_id": "resource_server",
+      "client_secret": "resource_server"
+    },
+    "invalid_credentials": {
+      "tenant_code": "asp",
+      "scope": "offline_access",
+      "grant_type": "password",
+      "client_id": "resource_server",
+      "client_secret": "resource_server",
+      "username": "invalid_user",
+      "password": "wrong_password"
+    },
+    "invalid_tenant": {
+      "tenant_code": "invalid_tenant_xyz",
+      "scope": "offline_access",
+      "grant_type": "password",
+      "client_id": "resource_server",
+      "client_secret": "resource_server"
+    },
+    "invalid_client_secret": {
+      "tenant_code": "asp",
+      "scope": "offline_access",
+      "grant_type": "password",
+      "client_id": "resource_server",
+      "client_secret": "wrong_secret"
+    },
+    "missing_grant_type": {
+      "tenant_code": "asp",
+      "scope": "offline_access",
+      "client_id": "resource_server",
+      "client_secret": "resource_server"
+    }
+  },
+  "farmer": {
+    "create_valid": {
+      "farmerfirstname": "Automation Test Farmer",
+      "farmermobilenumber": "9000000001",
+      "farmerisdcode": "+91",
+      "farmerisocode": "IN",
+      "rajaadditionaltext": "text",
+      "rajaadditionalDate": "2026-07-01T00:00:00.000Z",
+      "rajaadditionalMultiSelect": "22,33",
+      "declaredAreaUnit": "ACRE",
+      "isGDPRCompliant": true
+    },
+    "edit": {
+      "farmer_id": 1000001
+    }
+  },
+  "asset": {
+    "create_valid": {
+      "rajaadditionalcheckbox": [
+        "test",
+        "new test"
+      ],
+      "rajaadditonalUrl": "https://cloud.cropin.in",
+      "tags": [
+        3972253
+      ],
+      "assetdeclaredareaunit": "ACRE",
+      "declaredareacount": 5,
+      "soiltypeid": 1059,
+      "irrigationtypeid": 1107,
+      "asset_name": "Raja api automation asset"
+    },
+    "edit": {
+      "asset_id": 2000001
+    }
+  },
+  "plantype": {
+    "create_valid": {
+      "plantype_name": "Raja api automation plantype",
+      "custom_attribute_1_name": "Textattri0",
+      "custom_attribute_1_label": "Text attribute 1",
+      "custom_attribute_2_name": "Dropdowna1",
+      "custom_attribute_2_label": "Dropdown attribute 2",
+      "custom_attribute_3_name": "Smartcomp2",
+      "custom_attribute_3_label": "Smartcompute attribute 3"
+    },
+    "edit": {
+      "plantype_id": 3000001
+    }
+  },
+  "crop_variety": {
+    "create_valid": {
+      "crop_id": 1015,
+      "variety_name": "Raja api automation variety",
+      "expected_harvest_days": 200,
+      "expected_yield": 3000,
+      "expected_yield_unit": "KILOGRAM",
+      "reference_area_unit": "ACRE",
+      "crop_stage_names": [
+        "flowering",
+        "watering",
+        "Harvest"
+      ],
+      "harvest_grade_names": [
+        "automation harvest 1",
+        "automation harvest 2"
+      ]
+    },
+    "edit": {
+      "crop_variety_id": 4000001
+    }
+  },
+  "project": {
+    "create_valid": {
+      "project_name": "Raja api automation project"
+    },
+    "execute": {
+      "project_id_fallback": 5000001
+    },
+    "assets": {
+      "project_asset_ids_fallback": [
+        6000001
+      ]
+    },
+    "croppable_area": {
+      "croppable_area_id_fallback": "REPLACE_WITH_REAL_FALLBACK_CROPPABLE_AREA_ID"
+    }
+  },
+  "plan": {
+    "create_valid": {
+      "plan_name": "Api automation plantype",
+      "fixed_execution_dates": [
+        "2026-07-01T00:00:00.000Z",
+        "2026-07-08T00:00:00.000Z",
+        "2026-07-15T00:00:00.000Z",
+        "2026-07-22T00:00:00.000Z"
+      ]
+    }
+  },
+  "settings": {
+    "api_call_interval": {
+      "seconds": 2
+    },
+    "email_report": {
+      "enabled": true,
+      "recipients": [
+        "rajasekhar.palleti@cropin.com"
+      ]
+    },
+    "cleanup": {
+      "enabled": true
+    }
+  }
+}

@@ -1,0 +1,150 @@
+/* Modern theme overrides for the pytest-html report — layered on top of
+   pytest-html's default style.css via the --css option (see
+   pytest_configure in conftest.py). Selectors intentionally match the
+   defaults so these simply win the cascade instead of duplicating rules. */
+
+:root {
+  --accent: #4f46e5;
+  --accent-dark: #3730a3;
+  --ink: #1f2430;
+  --muted: #6b7280;
+  --border: #e5e7eb;
+  --surface: #ffffff;
+  --page-bg: #f4f5f7;
+  --pass: #16a34a;
+  --fail: #dc2626;
+  --warn: #d97706;
+}
+
+html {
+  background: var(--page-bg);
+}
+
+body {
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 13px;
+  color: var(--ink);
+  min-width: 800px;
+  max-width: 1180px;
+  margin: 24px auto;
+  padding: 0 20px 60px;
+}
+
+h1 {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+
+h2 {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+p {
+  color: var(--muted);
+}
+
+a {
+  color: var(--accent);
+}
+
+a:hover {
+  color: var(--accent-dark);
+}
+
+/* Summary card */
+.summary {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px 24px;
+  margin-bottom: 20px;
+  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.04);
+}
+
+#environment {
+  border-collapse: collapse;
+  border-radius: 8px;
+  overflow: hidden;
+}
+#environment td {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+}
+#environment tr:nth-child(odd) {
+  background-color: #f9fafb;
+}
+
+span.passed,
+.passed .col-result {
+  color: var(--pass);
+  font-weight: 600;
+}
+span.skipped,
+span.xfailed,
+span.rerun,
+.skipped .col-result,
+.xfailed .col-result,
+.rerun .col-result {
+  color: var(--warn);
+  font-weight: 600;
+}
+span.error,
+span.failed,
+span.xpassed,
+.error .col-result,
+.failed .col-result,
+.xpassed .col-result {
+  color: var(--fail);
+  font-weight: 600;
+}
+
+/* Results table */
+#results-table {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  width: 100%;
+  background: var(--surface);
+  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.04);
+}
+#results-table th,
+#results-table td {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  text-align: left;
+}
+#results-table th {
+  font-weight: 600;
+  background: #f9fafb;
+  color: var(--ink);
+}
+#results-table tbody tr:hover {
+  background-color: #f5f6ff;
+}
+
+.logwrapper {
+  border-radius: 8px;
+  background-color: #f4f5f7;
+}
+
+/* Extras (our JSON "API Calls" links) rendered as small pill buttons */
+.col-links__extra {
+  display: inline-block;
+  padding: 3px 10px;
+  margin: 2px 3px 2px 0;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff !important;
+  font-size: 11px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.col-links__extra:hover {
+  background: var(--accent-dark);
+}

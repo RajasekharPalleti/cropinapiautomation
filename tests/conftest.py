@@ -44,6 +44,22 @@ _api_call_log_offset = 0
 # further digging, so fixtures needing this are wrapped directly instead.)
 _CALLS_BY_FIXTURE: dict[str, list[dict]] = {}
 
+# Raw creation responses, stashed as a side effect by the fixtures below
+# (created_project, created_farmer, created_asset, created_crop_variety,
+# probable_assets_response, self_validate_response) as soon as each one
+# actually runs. cleanup_created_records reads this directly instead of
+# taking these as fixture parameters — several created_X_id fixtures now
+# call pytest.skip() when their creation failed, and skip exceptions are
+# cached and re-raised for every dependent, cascading up through anything
+# that requests them. cleanup_created_records is autouse, so if it listed
+# any skip-raising fixture (or one that transitively depends on one, like
+# created_asset needing created_farmer_id for its own payload) as a
+# parameter, one failed creation would skip literally every test in the
+# run, including the create test itself (which should show its own clear
+# Failed, not Skipped). Reading from this plain dict sidesteps pytest's
+# fixture graph entirely.
+_CREATED_RECORDS: dict = {}
+
 
 def tracked_fixture(fixture_func):
     """Decorator for a fixture whose body makes ApiClient calls — records
@@ -504,24 +520,30 @@ def plan_service(api_client) -> PlanService:
 def created_farmer(farmer_service):
     """The one farmer create() response for the whole run — test_create_farmer
     asserts on this directly instead of making its own separate call."""
-    return farmer_service.create(
+    response = farmer_service.create(
         farmer_service.build_create_payload(load_test_data("farmer", "create_valid"))
     )
+    _CREATED_RECORDS["farmer"] = response
+    return response
 
 
 @pytest.fixture(scope="session")
 def created_farmer_id(created_farmer):
-    """The shared farmer's id, falling back to test_data's
-    farmer.edit.farmer_id if create failed or the response has no id. Never
-    raises: test_create_farmer_success already asserts on created_farmer
-    directly and reports its own failure — every other test just needs
-    *some* id to attempt its own action with, so a failure here shouldn't
-    cascade into a fixture error blocking unrelated scenarios."""
+    """The shared farmer's id — session-created only, no test-data
+    placeholder fallback. test_create_farmer_success already asserts on
+    created_farmer directly and reports its own failure there; if create
+    failed, this fixture skips (via pytest.skip) instead of handing out a
+    fake id — every test/fixture that depends on created_farmer_id (edit,
+    asset creation, etc.) skips along with it rather than silently
+    operating on a record that was never actually created this run."""
     if created_farmer.status == 201:
         farmer_id = created_farmer.json().get("id")
         if farmer_id:
             return farmer_id
-    return load_test_data("farmer", "edit")["farmer_id"]
+    pytest.skip(
+        f"Farmer creation failed this run (status {created_farmer.status}) — "
+        "skipping tests that need created_farmer_id"
+    )
 
 
 @pytest.fixture(scope="session")
@@ -529,21 +551,26 @@ def created_farmer_id(created_farmer):
 def created_asset(asset_service, created_farmer_id):
     """The one asset create() response for the whole run (owned by the one
     shared farmer) — test_create_asset asserts on this directly."""
-    return asset_service.create(
+    response = asset_service.create(
         asset_service.build_create_payload(load_test_data("asset", "create_valid"), created_farmer_id)
     )
+    _CREATED_RECORDS["asset"] = response
+    return response
 
 
 @pytest.fixture(scope="session")
 def created_asset_id(created_asset):
-    """The shared asset's id, falling back to test_data's asset.edit.asset_id
-    if create failed or the response has no id. Never raises — see
+    """The shared asset's id — session-created only, no test-data
+    fallback. Skips dependent tests/fixtures if create failed — see
     created_farmer_id above for why."""
     if created_asset.status == 201:
         asset_id = created_asset.json().get("id")
         if asset_id:
             return asset_id
-    return load_test_data("asset", "edit")["asset_id"]
+    pytest.skip(
+        f"Asset creation failed this run (status {created_asset.status}) — "
+        "skipping tests that need created_asset_id"
+    )
 
 
 @pytest.fixture(scope="session")
@@ -557,14 +584,17 @@ def created_plantype(plantype_service):
 
 @pytest.fixture(scope="session")
 def created_plantype_id(created_plantype):
-    """The shared plan type's id, falling back to test_data's
-    plantype.edit.plantype_id if create failed or the response has no id.
-    Never raises — see created_farmer_id above for why."""
+    """The shared plan type's id — session-created only, no test-data
+    fallback. Skips dependent tests/fixtures if create failed — see
+    created_farmer_id above for why."""
     if created_plantype.status == 201:
         plantype_id = created_plantype.json().get("id")
         if plantype_id:
             return plantype_id
-    return load_test_data("plantype", "edit")["plantype_id"]
+    pytest.skip(
+        f"Plan type creation failed this run (status {created_plantype.status}) — "
+        "skipping tests that need created_plantype_id"
+    )
 
 
 @pytest.fixture(scope="session")
@@ -594,9 +624,11 @@ def plantype_update_response(plantype_service, created_plantype_id) -> dict:
 def created_crop_variety(crop_variety_service):
     """The one crop variety create() response for the whole run —
     test_create_crop_variety asserts on this directly."""
-    return crop_variety_service.create(
+    response = crop_variety_service.create(
         crop_variety_service.build_create_payload(load_test_data("crop_variety", "create_valid"))
     )
+    _CREATED_RECORDS["crop_variety"] = response
+    return response
 
 
 @pytest.fixture(scope="session")
@@ -604,27 +636,31 @@ def created_crop_variety(crop_variety_service):
 def crop_variety_additional_attributes_response(crop_variety_service, created_crop_variety):
     """The mandatory additional-attribute follow-up call, run once against
     the one shared variety — test_create_crop_variety asserts on this
-    directly too. Falls back to test_data's crop_variety.edit.crop_variety_id
-    if create didn't return a usable id, so this call (and downstream tests)
-    are still attempted instead of being blocked by an upstream failure."""
-    if created_crop_variety.status == 201 and created_crop_variety.json().get("id"):
-        variety_id = created_crop_variety.json()["id"]
-    else:
-        variety_id = load_test_data("crop_variety", "edit")["crop_variety_id"]
+    directly too. No test-data fallback id — skips (and cascades to every
+    test/fixture depending on it, including created_crop_variety_id below)
+    if the variety itself was never actually created this run."""
+    if created_crop_variety.status != 201 or not created_crop_variety.json().get("id"):
+        pytest.skip(
+            f"Crop variety creation failed this run (status {created_crop_variety.status}) — "
+            "skipping the additional-attributes call"
+        )
+    variety_id = created_crop_variety.json()["id"]
     return crop_variety_service.add_additional_attributes(variety_id)
 
 
 @pytest.fixture(scope="session")
 def created_crop_variety_id(created_crop_variety, crop_variety_additional_attributes_response):
-    """The shared crop variety's id, falling back to test_data's
-    crop_variety.edit.crop_variety_id if create failed or the response has
-    no id — regardless of whether the additional-attribute call itself
-    succeeded. Never raises — see created_farmer_id above for why."""
+    """The shared crop variety's id — session-created only, no test-data
+    fallback. Skips dependent tests/fixtures if create failed — see
+    created_farmer_id above for why."""
     if created_crop_variety.status == 201:
         variety_id = created_crop_variety.json().get("id")
         if variety_id:
             return variety_id
-    return load_test_data("crop_variety", "edit")["crop_variety_id"]
+    pytest.skip(
+        f"Crop variety creation failed this run (status {created_crop_variety.status}) — "
+        "skipping tests that need created_crop_variety_id"
+    )
 
 
 @pytest.fixture(scope="session")
@@ -646,17 +682,23 @@ def created_plan(plan_service, created_plantype_id, created_crop_variety_id) -> 
 def created_plan_id(created_plan):
     """The shared plan's id, extracted from the create() response — the
     real response body is a list (not a single object), so the id comes off
-    its first item. No test-data fallback exists for this (no plan id was
-    ever provided), so this is None if create failed or the response has no
-    items. Never raises — see created_farmer_id above for why."""
+    its first item. No test-data fallback — skips dependent tests/fixtures
+    if create failed or the response has no usable id — see
+    created_farmer_id above for why."""
     response = created_plan["response"]
     if response.status == 200:
         body = response.json()
+        plan_id = None
         if isinstance(body, list) and body:
-            return body[0].get("id")
-        if isinstance(body, dict):
-            return body.get("id")
-    return None
+            plan_id = body[0].get("id")
+        elif isinstance(body, dict):
+            plan_id = body.get("id")
+        if plan_id:
+            return plan_id
+    pytest.skip(
+        f"Plan creation failed this run (status {response.status}) — "
+        "skipping tests that need created_plan_id"
+    )
 
 
 @pytest.fixture(scope="session")
@@ -667,21 +709,26 @@ def created_project(project_service):
     separate call, and every project-lifecycle test below (execute,
     add-asset, validate, verify, update-croppable-area) acts on this same
     project."""
-    return project_service.create(
+    response = project_service.create(
         project_service.build_create_payload(load_test_data("project", "create_valid"))
     )
+    _CREATED_RECORDS["project"] = response
+    return response
 
 
 @pytest.fixture(scope="session")
 def created_project_id(created_project):
-    """The shared project's id, falling back to test_data's
-    project.execute.project_id_fallback if create failed or the response
-    has no id. Never raises — see created_farmer_id above for why."""
+    """The shared project's id — session-created only, no test-data
+    fallback. Skips dependent tests/fixtures if create failed — see
+    created_farmer_id above for why."""
     if created_project.status == 201:
         project_id = created_project.json().get("id")
         if project_id:
             return project_id
-    return load_test_data("project", "execute")["project_id_fallback"]
+    pytest.skip(
+        f"Project creation failed this run (status {created_project.status}) — "
+        "skipping tests that need created_project_id"
+    )
 
 
 @pytest.fixture(scope="session")
@@ -696,23 +743,31 @@ def probable_assets_response(project_service, created_project_id, created_asset_
     blocking every other project-lifecycle test."""
     response = project_service.add_probable_assets(created_project_id, [created_asset_id])
     if response.status != 200:
-        return {
+        result = {
             "recordsFailed": 1,
             "recordsCompleted": 0,
             "error": f"HTTP {response.status}: {response.text()}",
             "projectAssetIds": [],
         }
-    return response.json()
+    else:
+        result = response.json()
+    _CREATED_RECORDS["probable_assets"] = result
+    return result
 
 
 @pytest.fixture(scope="session")
 def project_asset_ids(probable_assets_response):
-    """The projectAssetIds from the one probable-assets call above — falls
-    back to test_data's project.assets.project_asset_ids_fallback if the
-    response didn't return any."""
-    return probable_assets_response.get("projectAssetIds") or load_test_data(
-        "project", "assets"
-    )["project_asset_ids_fallback"]
+    """The projectAssetIds from the one probable-assets call above —
+    session-created only, no test-data fallback. Skips dependent
+    tests/fixtures if the call didn't return any — see created_farmer_id
+    above for why."""
+    ids = probable_assets_response.get("projectAssetIds")
+    if not ids:
+        pytest.skip(
+            "probable-assets did not return any projectAssetIds this run — "
+            f"skipping tests that need project_asset_ids: {probable_assets_response}"
+        )
+    return ids
 
 
 @pytest.fixture(scope="session")
@@ -725,25 +780,31 @@ def self_validate_response(project_service, created_project_id, project_asset_id
     probable_assets_response above."""
     response = project_service.self_validate_project_assets(created_project_id, project_asset_ids)
     if response.status != 200:
-        return {
+        result = {
             "recordsFailed": 1,
             "recordsCompleted": 0,
             "croppableAreaIds": [],
             "error": f"HTTP {response.status}: {response.text()}",
         }
-    return response.json()
+    else:
+        result = response.json()
+    _CREATED_RECORDS["self_validate"] = result
+    return result
 
 
 @pytest.fixture(scope="session")
 def croppable_area_ids(self_validate_response):
     """The croppableAreaIds from the one self-validate-project-assets call
-    above — falls back to test_data's
-    project.croppable_area.croppable_area_id_fallback if the response
-    didn't return any, so downstream tests (verify, update) can still be
-    attempted instead of being blocked."""
-    return self_validate_response.get("croppableAreaIds") or [
-        load_test_data("project", "croppable_area")["croppable_area_id_fallback"]
-    ]
+    above — session-created only, no test-data fallback. Skips downstream
+    tests/fixtures (verify, update) if the response didn't return any —
+    see created_farmer_id above for why."""
+    ids = self_validate_response.get("croppableAreaIds")
+    if not ids:
+        pytest.skip(
+            "self-validate-project-assets did not return any croppableAreaIds this run — "
+            f"skipping tests that need croppable_area_ids: {self_validate_response}"
+        )
+    return ids
 
 
 @pytest.fixture(scope="session")
@@ -777,16 +838,6 @@ def cleanup_created_records(
     asset_service,
     farmer_service,
     crop_variety_service,
-    created_project,
-    created_project_id,
-    croppable_area_ids,
-    project_asset_ids,
-    created_asset,
-    created_asset_id,
-    created_farmer,
-    created_farmer_id,
-    created_crop_variety,
-    created_crop_variety_id,
 ):
     """Session-scoped teardown: after all tests finish, cleans up this
     run's real records in the required order — close the croppable area(s),
@@ -797,15 +848,29 @@ def cleanup_created_records(
     the normal pass/fail rows.
 
     Each step only runs if that entity's own create() call actually
-    succeeded (status 201) THIS run. created_X_id fixtures fall back to a
-    test-data placeholder id when create fails — that id belongs to no
-    record this run created, so it must never be passed to a delete call;
-    a failed step is instead recorded as skipped.
+    succeeded (status 201) THIS run — ids are extracted from the raw
+    responses in _CREATED_RECORDS below, never from a test-data placeholder.
 
-    Note: as an autouse session fixture depending on every created_X_id,
-    this forces the full create chain even on a filtered/marker-based run
-    (e.g. `pytest -m farmer`) — acceptable for now since every run so far
-    has been a full-suite run; revisit if selective runs become common.
+    Deliberately takes NO business-data fixtures as parameters — only the
+    plain service fixtures (which never raise). The actual create responses
+    are read from the module-level _CREATED_RECORDS dict instead (see its
+    definition above), which each creation fixture stashes into as a side
+    effect. Several created_X_id fixtures now call pytest.skip() when their
+    creation failed, and skip exceptions are cached and re-raised for every
+    dependent, cascading upward through anything that requests them
+    (including transitively — e.g. created_asset needs created_farmer_id
+    for its own payload). Since this is an autouse session fixture, every
+    test's setup resolves it first; if it listed any such fixture as a
+    parameter, one failed creation would skip literally every test in the
+    run, including the create test itself (which should show its own clear
+    Failed, not Skipped) — reading from the plain dict instead sidesteps
+    pytest's fixture graph entirely.
+
+    Note: as an autouse session fixture, this only sees whatever's in
+    _CREATED_RECORDS by the time the session ends — acceptable for now
+    since every run so far has been a full-suite run where all the create
+    fixtures get triggered anyway; revisit if selective marker-based runs
+    become common.
 
     Asset/farmer/crop variety deletes are the bulk-delete shape
     `DELETE {resource_path}/bulk?ids=...` (BaseService.delete_bulk) — a 200
@@ -822,6 +887,28 @@ def cleanup_created_records(
     """
     yield
 
+    def _extract_id(response):
+        if response is not None and response.status == 201:
+            return response.json().get("id")
+        return None
+
+    def _created(response):
+        return response is not None and response.status == 201
+
+    created_project = _CREATED_RECORDS.get("project")
+    created_asset = _CREATED_RECORDS.get("asset")
+    created_farmer = _CREATED_RECORDS.get("farmer")
+    created_crop_variety = _CREATED_RECORDS.get("crop_variety")
+    probable_assets_response = _CREATED_RECORDS.get("probable_assets") or {}
+    self_validate_response = _CREATED_RECORDS.get("self_validate") or {}
+
+    created_project_id = _extract_id(created_project)
+    created_asset_id = _extract_id(created_asset)
+    created_farmer_id = _extract_id(created_farmer)
+    created_crop_variety_id = _extract_id(created_crop_variety)
+    project_asset_ids = probable_assets_response.get("projectAssetIds") or []
+    croppable_area_ids = self_validate_response.get("croppableAreaIds") or []
+
     try:
         cleanup_enabled = load_test_data("settings", "cleanup").get("enabled", True)
     except KeyError:
@@ -833,7 +920,7 @@ def cleanup_created_records(
         )
         return
 
-    project_created = created_project.status == 201
+    project_created = _created(created_project)
 
     # 1. Close, then delete croppable area(s) — two-step async process.
     # Skipped entirely if the project itself was never actually created
@@ -872,7 +959,7 @@ def cleanup_created_records(
 
     # 2. Delete crop variety — DELETE {resource_path}/bulk?ids=... (bulk-delete shape).
     # Skipped if the variety was never actually created this run.
-    if created_crop_variety.status == 201:
+    if _created(created_crop_variety):
         _record_bulk_delete(
             "crop_variety", created_crop_variety_id, crop_variety_service.delete_bulk([created_crop_variety_id])
         )
@@ -884,7 +971,7 @@ def cleanup_created_records(
 
     # 3. Delete asset — DELETE {resource_path}/bulk?ids=... (bulk-delete shape).
     # Skipped if the asset was never actually created this run.
-    if created_asset.status == 201:
+    if _created(created_asset):
         _record_bulk_delete("asset", created_asset_id, asset_service.delete_bulk([created_asset_id]))
     else:
         _record_cleanup(
@@ -893,7 +980,7 @@ def cleanup_created_records(
 
     # 4. Delete farmer — DELETE {resource_path}/bulk?ids=... (bulk-delete shape).
     # Skipped if the farmer was never actually created this run.
-    if created_farmer.status == 201:
+    if _created(created_farmer):
         _record_bulk_delete("farmer", created_farmer_id, farmer_service.delete_bulk([created_farmer_id]))
     else:
         _record_cleanup(

@@ -1,0 +1,93 @@
+name: API Test Suite
+
+# Manual-only trigger by design: every run creates real records (farmer,
+# asset, plan type, crop variety, plan, project, ...) in whichever
+# environment is selected, so this only runs when someone explicitly clicks
+# "Run workflow" in the Actions tab (or `gh workflow run api-tests.yml`).
+#
+# To ALSO run this automatically, add one of these blocks alongside
+# `workflow_dispatch:` below (keep workflow_dispatch either way, so manual
+# runs still work):
+#
+#   schedule:
+#     - cron: "0 3 * * *"     # nightly at 03:00 UTC — pick a fixed env below
+#                              # instead of the runtime dropdown, since a
+#                              # schedule can't be prompted for input.
+#
+#   push:
+#     branches: ["main"]       # runs on every push to main — every merge
+#                              # will create new real records.
+#
+#   pull_request: {}           # runs on every PR — same real-data caveat.
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "qa"
+        type: choice
+        options:
+          - qa
+          - uat
+          - prod
+      markers:
+        description: >-
+          Optional pytest -m marker expression (e.g. "smoke", "sanity",
+          "regression", "farmer and smoke"). Leave blank to run everything.
+        required: false
+        default: ""
+
+jobs:
+  run-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run API tests
+        env:
+          ENV_TARGET: ${{ inputs.environment }}
+          MARKER_EXPR: ${{ inputs.markers }}
+          # Per-environment credentials — configure these in
+          # Settings -> Secrets and variables -> Actions. Only the block
+          # matching ENV_TARGET actually gets used (see src/config/settings.py).
+          CROPIN_QA_USERNAME: ${{ secrets.CROPIN_QA_USERNAME }}
+          CROPIN_QA_PASSWORD: ${{ secrets.CROPIN_QA_PASSWORD }}
+          CROPIN_QA_TENANT_ID: ${{ secrets.CROPIN_QA_TENANT_ID }}
+          CROPIN_UAT_USERNAME: ${{ secrets.CROPIN_UAT_USERNAME }}
+          CROPIN_UAT_PASSWORD: ${{ secrets.CROPIN_UAT_PASSWORD }}
+          CROPIN_UAT_TENANT_ID: ${{ secrets.CROPIN_UAT_TENANT_ID }}
+          CROPIN_PROD_USERNAME: ${{ secrets.CROPIN_PROD_USERNAME }}
+          CROPIN_PROD_PASSWORD: ${{ secrets.CROPIN_PROD_PASSWORD }}
+          CROPIN_PROD_TENANT_ID: ${{ secrets.CROPIN_PROD_TENANT_ID }}
+          # SMTP — only used when ENV_TARGET is prod (see
+          # test_data/prod.json -> settings.email_report for the on/off
+          # switch and recipients).
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM_EMAIL: ${{ secrets.SMTP_FROM_EMAIL }}
+        run: |
+          if [ -n "$MARKER_EXPR" ]; then
+            pytest --env="$ENV_TARGET" -m "$MARKER_EXPR"
+          else
+            pytest --env="$ENV_TARGET"
+          fi
+
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: report-${{ inputs.environment }}
+          path: reports/report_${{ inputs.environment }}.html
+          if-no-files-found: warn

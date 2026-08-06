@@ -37,6 +37,17 @@ on:
           "regression", "farmer and smoke"). Leave blank to run everything.
         required: false
         default: ""
+      cleanup:
+        description: >-
+          Run the teardown (delete the records this run creates)? Overrides
+          test_data/<env>.json's settings.cleanup.enabled for this run only
+          — leave as "true" for normal use.
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
 
 jobs:
   run-tests:
@@ -57,6 +68,9 @@ jobs:
         env:
           ENV_TARGET: ${{ inputs.environment }}
           MARKER_EXPR: ${{ inputs.markers }}
+          # Overrides test_data/<env>.json's settings.cleanup.enabled for
+          # this run only — see tests/conftest.py's cleanup_created_records.
+          CLEANUP_OVERRIDE: ${{ inputs.cleanup }}
           # Per-environment credentials — configure these in
           # Settings -> Secrets and variables -> Actions. Only the block
           # matching ENV_TARGET actually gets used (see src/config/settings.py).

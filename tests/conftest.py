@@ -909,14 +909,24 @@ def cleanup_created_records(
     project_asset_ids = probable_assets_response.get("projectAssetIds") or []
     croppable_area_ids = self_validate_response.get("croppableAreaIds") or []
 
-    try:
-        cleanup_enabled = load_test_data("settings", "cleanup").get("enabled", True)
-    except KeyError:
-        cleanup_enabled = True
+    # CLEANUP_OVERRIDE (set by the GitHub Actions workflow's "cleanup"
+    # boolean input) takes priority for this run only; falls back to
+    # test_data/<env>.json's settings.cleanup.enabled when not set (e.g.
+    # local runs), which itself defaults to enabled if the key is missing.
+    cleanup_override = os.getenv("CLEANUP_OVERRIDE")
+    if cleanup_override is not None:
+        cleanup_enabled = cleanup_override.strip().lower() == "true"
+        cleanup_source = "CLEANUP_OVERRIDE env var"
+    else:
+        try:
+            cleanup_enabled = load_test_data("settings", "cleanup").get("enabled", True)
+        except KeyError:
+            cleanup_enabled = True
+        cleanup_source = "test_data settings.cleanup.enabled"
 
     if not cleanup_enabled:
         _record_cleanup(
-            "all", "-", note="Skipped — cleanup disabled via test data (settings.cleanup.enabled=false)"
+            "all", "-", note=f"Skipped — cleanup disabled via {cleanup_source}"
         )
         return
 

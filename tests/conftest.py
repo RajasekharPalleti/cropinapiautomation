@@ -72,7 +72,18 @@ def tracked_fixture(fixture_func):
     the calls it causes into _CALLS_BY_FIXTURE, keyed by the fixture's own
     name, the one time its body actually executes. Apply directly above
     @pytest.fixture(...) (i.e. this decorator runs first, closest to the
-    function)."""
+    function).
+
+    Also advances the global _api_call_log_offset past these calls right
+    here — without this, the test that happens to be the FIRST to trigger
+    this fixture would double-count its calls: once via _CALLS_BY_FIXTURE
+    (since the test names this fixture as a parameter) and again via
+    pytest_runtest_makereport's own offset-based "direct calls" tracking
+    (since they also happened during that same test's setup phase). This
+    "consumes" the calls the moment they're attributed here, so they show
+    up exactly once, on whichever test's fixture-list names this fixture —
+    never also folded into anyone's direct-call count.
+    """
 
     @functools.wraps(fixture_func)
     def wrapper(*args, **kwargs):
@@ -83,6 +94,8 @@ def tracked_fixture(fixture_func):
         after = len(_LAST_API_CLIENT.call_log)
         if after > before:
             _CALLS_BY_FIXTURE[fixture_func.__name__] = _LAST_API_CLIENT.call_log[before:after]
+            global _api_call_log_offset
+            _api_call_log_offset = after
         return result
 
     return wrapper

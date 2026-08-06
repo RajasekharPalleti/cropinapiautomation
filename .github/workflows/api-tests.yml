@@ -21,7 +21,7 @@ on:
       environment:
         description: "Target environment"
         required: true
-        default: "qa"
+        default: "prod"
         type: choice
         options:
           - qa
@@ -30,7 +30,7 @@ on:
       markers:
         description: "Which tests to run"
         required: true
-        default: "all"
+        default: "sanity"
         type: choice
         options:
           - all
@@ -38,16 +38,13 @@ on:
           - smoke
           - regression
       cleanup:
-        description: >-
-          Run the teardown (delete the records this run creates)? Overrides
-          test_data/<env>.json's settings.cleanup.enabled for this run only
-          — leave as "true" for normal use.
+        description: "Run the teardown (delete the records this run creates)?"
         required: true
-        default: "true"
+        default: "yes"
         type: choice
         options:
-          - "true"
-          - "false"
+          - "yes"
+          - "no"
       # GitHub Actions has no true multi-select input type (only string,
       # boolean, choice, environment) — one checkbox per recipient is the
       # closest real equivalent, letting you pick any combination including
@@ -96,7 +93,7 @@ jobs:
           if [ "${{ github.event_name }}" = "schedule" ]; then
             echo "environment=prod" >> "$GITHUB_OUTPUT"
             echo "markers=sanity" >> "$GITHUB_OUTPUT"
-            echo "cleanup=true" >> "$GITHUB_OUTPUT"
+            echo "cleanup=yes" >> "$GITHUB_OUTPUT"
             echo "notify_rajasekhar=true" >> "$GITHUB_OUTPUT"
             echo "notify_ganesh=true" >> "$GITHUB_OUTPUT"
             echo "notify_sfplusqa=true" >> "$GITHUB_OUTPUT"

@@ -1,25 +1,21 @@
 name: API Test Suite
 
-# Manual-only trigger by design: every run creates real records (farmer,
-# asset, plan type, crop variety, plan, project, ...) in whichever
-# environment is selected, so this only runs when someone explicitly clicks
-# "Run workflow" in the Actions tab (or `gh workflow run api-tests.yml`).
+# Two triggers:
 #
-# To ALSO run this automatically, add one of these blocks alongside
-# `workflow_dispatch:` below (keep workflow_dispatch either way, so manual
-# runs still work):
+# 1. schedule — automatic, 10:30 AM IST (05:00 UTC) Monday-Friday. A
+#    scheduled run can't be prompted for input, so its parameters are
+#    hardcoded in the "Resolve run parameters" step below: prod, sanity
+#    markers, cleanup on, all three recipients notified.
 #
-#   schedule:
-#     - cron: "0 3 * * *"     # nightly at 03:00 UTC — pick a fixed env below
-#                              # instead of the runtime dropdown, since a
-#                              # schedule can't be prompted for input.
+# 2. workflow_dispatch — manual, via the Actions tab "Run workflow" button
+#    (or `gh workflow run api-tests.yml`), which lets you pick environment/
+#    markers/cleanup/recipients each time.
 #
-#   push:
-#     branches: ["main"]       # runs on every push to main — every merge
-#                              # will create new real records.
-#
-#   pull_request: {}           # runs on every PR — same real-data caveat.
+# Either way, every run creates real records (farmer, asset, plan type,
+# crop variety, plan, project, ...) in whichever environment is targeted.
 on:
+  schedule:
+    - cron: "0 5 * * 1-5"
   workflow_dispatch:
     inputs:
       environment:
@@ -32,11 +28,15 @@ on:
           - uat
           - prod
       markers:
-        description: >-
-          Optional pytest -m marker expression (e.g. "smoke", "sanity",
-          "regression", "farmer and smoke"). Leave blank to run everything.
-        required: false
-        default: ""
+        description: "Which tests to run"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - sanity
+          - smoke
+          - regression
       cleanup:
         description: >-
           Run the teardown (delete the records this run creates)? Overrides
@@ -48,6 +48,27 @@ on:
         options:
           - "true"
           - "false"
+      # GitHub Actions has no true multi-select input type (only string,
+      # boolean, choice, environment) — one checkbox per recipient is the
+      # closest real equivalent, letting you pick any combination including
+      # all three. Only used when environment is prod (see
+      # test_data/prod.json -> settings.email_report for the base
+      # enabled/recipients list this overrides for this run only).
+      notify_rajasekhar:
+        description: "Email report to rajasekhar.palleti@cropin.com"
+        required: true
+        default: true
+        type: boolean
+      notify_ganesh:
+        description: "Email report to ganesh.shanbhag@cropin.com"
+        required: true
+        default: true
+        type: boolean
+      notify_sfplusqa:
+        description: "Email report to sfplusqa@cropin.com"
+        required: true
+        default: true
+        type: boolean
 
 jobs:
   run-tests:
@@ -64,13 +85,37 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Resolve run parameters
+        id: params
+        run: |
+          # Schedule-triggered runs have no `inputs` context at all (that's
+          # only populated for workflow_dispatch), so this step is the one
+          # place that decides what every later step actually uses —
+          # everything downstream reads steps.params.outputs.*, never
+          # `inputs.*` directly.
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "environment=prod" >> "$GITHUB_OUTPUT"
+            echo "markers=sanity" >> "$GITHUB_OUTPUT"
+            echo "cleanup=true" >> "$GITHUB_OUTPUT"
+            echo "notify_rajasekhar=true" >> "$GITHUB_OUTPUT"
+            echo "notify_ganesh=true" >> "$GITHUB_OUTPUT"
+            echo "notify_sfplusqa=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "environment=${{ inputs.environment }}" >> "$GITHUB_OUTPUT"
+            echo "markers=${{ inputs.markers }}" >> "$GITHUB_OUTPUT"
+            echo "cleanup=${{ inputs.cleanup }}" >> "$GITHUB_OUTPUT"
+            echo "notify_rajasekhar=${{ inputs.notify_rajasekhar }}" >> "$GITHUB_OUTPUT"
+            echo "notify_ganesh=${{ inputs.notify_ganesh }}" >> "$GITHUB_OUTPUT"
+            echo "notify_sfplusqa=${{ inputs.notify_sfplusqa }}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Run API tests
         env:
-          ENV_TARGET: ${{ inputs.environment }}
-          MARKER_EXPR: ${{ inputs.markers }}
+          ENV_TARGET: ${{ steps.params.outputs.environment }}
+          MARKER_EXPR: ${{ steps.params.outputs.markers }}
           # Overrides test_data/<env>.json's settings.cleanup.enabled for
           # this run only — see tests/conftest.py's cleanup_created_records.
-          CLEANUP_OVERRIDE: ${{ inputs.cleanup }}
+          CLEANUP_OVERRIDE: ${{ steps.params.outputs.cleanup }}
           # Per-environment credentials — configure these in
           # Settings -> Secrets and variables -> Actions. Only the block
           # matching ENV_TARGET actually gets used (see src/config/settings.py).
@@ -91,17 +136,31 @@ jobs:
           SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           SMTP_FROM_EMAIL: ${{ secrets.SMTP_FROM_EMAIL }}
+          NOTIFY_RAJASEKHAR: ${{ steps.params.outputs.notify_rajasekhar }}
+          NOTIFY_GANESH: ${{ steps.params.outputs.notify_ganesh }}
+          NOTIFY_SFPLUSQA: ${{ steps.params.outputs.notify_sfplusqa }}
         run: |
-          if [ -n "$MARKER_EXPR" ]; then
-            pytest --env="$ENV_TARGET" -m "$MARKER_EXPR"
-          else
+          # Builds this run's recipient list from the three checkboxes above
+          # — read by tests/conftest.py's pytest_unconfigure, which prefers
+          # this over test_data/prod.json's settings.email_report.recipients
+          # when set. Empty (all three unchecked) means "send to nobody",
+          # not "fall back to test data" — an explicit choice for this run.
+          RECIPIENTS=""
+          [ "$NOTIFY_RAJASEKHAR" = "true" ] && RECIPIENTS="rajasekhar.palleti@cropin.com"
+          [ "$NOTIFY_GANESH" = "true" ] && RECIPIENTS="${RECIPIENTS:+$RECIPIENTS,}ganesh.shanbhag@cropin.com"
+          [ "$NOTIFY_SFPLUSQA" = "true" ] && RECIPIENTS="${RECIPIENTS:+$RECIPIENTS,}sfplusqa@cropin.com"
+          export EMAIL_RECIPIENTS_OVERRIDE="$RECIPIENTS"
+
+          if [ "$MARKER_EXPR" = "all" ]; then
             pytest --env="$ENV_TARGET"
+          else
+            pytest --env="$ENV_TARGET" -m "$MARKER_EXPR"
           fi
 
       - name: Upload HTML report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: report-${{ inputs.environment }}
-          path: reports/report_${{ inputs.environment }}.html
+          name: report-${{ steps.params.outputs.environment }}
+          path: reports/report_${{ steps.params.outputs.environment }}.html
           if-no-files-found: warn

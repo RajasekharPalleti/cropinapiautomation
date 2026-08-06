@@ -1,11 +1,13 @@
 import functools
 import inspect
 import os
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 import requests
 from pytest_html import extras
+from pytest_metadata.plugin import metadata_key
 
 from src.config.settings import get_settings
 from src.core.api_client import ApiClient
@@ -29,6 +31,10 @@ logger = get_logger(__name__)
 # as a JSON extra in the HTML report.
 _LAST_API_CLIENT: ApiClient | None = None
 _api_call_log_offset = 0
+
+# Set by pytest_configure below — read by pytest_html_report_title to show
+# which -m marker expression this run used (SANITY/SMOKE/REGRESSION/ALL).
+_execution_type = "ALL"
 
 # Many "create"/"call" fixtures (created_farmer, probable_assets_response,
 # etc.) are session-scoped and only actually execute ONCE, the first time
@@ -150,12 +156,29 @@ def pytest_configure(config):
     if theme_path not in config.option.css:
         config.option.css.append(theme_path)
 
-    if hasattr(config, "_metadata"):
-        config._metadata["Environment"] = active_env.upper()
+    # Whatever -m marker expression this run used (sanity/smoke/regression/
+    # a combination), or ALL if none was passed — shown in the report title
+    # and metadata table so it's clear what kind of run this was without
+    # needing to check how it was triggered. Stashed as a module global
+    # (rather than read off `report.config` in pytest_html_report_title
+    # below) since pytest-html's ReportData only exposes config as the
+    # private `_config`.
+    global _execution_type
+    _execution_type = ((config.option.markexpr or "").strip() or "ALL").upper()
+
+    # pytest-metadata (3.x) stores metadata in config.stash[metadata_key],
+    # not the old config._metadata attribute — that attribute doesn't even
+    # exist on this version, so a plain hasattr() check silently skips
+    # every time. This is what actually renders as the "Environment" table
+    # in the report.
+    if metadata_key in config.stash:
+        config.stash[metadata_key]["Environment"] = active_env.upper()
+        config.stash[metadata_key]["Execution Type"] = _execution_type
 
 
 def pytest_html_report_title(report):
-    report.title = f"Cropin API Automation Report ({os.getenv('ENV', 'qa').upper()})"
+    active_env = os.getenv("ENV", "qa").upper()
+    report.title = f"Cropin API Automation Report ({active_env}) — {_execution_type}"
 
 
 def pytest_unconfigure(config):
@@ -179,13 +202,36 @@ def pytest_unconfigure(config):
     if not email_settings.get("enabled"):
         return
 
-    recipients = email_settings.get("recipients") or []
+    # EMAIL_RECIPIENTS_OVERRIDE (set by the GitHub Actions workflow's three
+    # notify_* checkboxes, comma-separated) replaces the recipient LIST for
+    # this run only — set (even to "", meaning every checkbox was
+    # unchecked) it takes priority; unset (e.g. local runs) falls back to
+    # test_data/prod.json's settings.email_report.recipients. Either way,
+    # settings.email_report.enabled above still gates whether any email
+    # sends at all.
+    recipients_override = os.getenv("EMAIL_RECIPIENTS_OVERRIDE")
+    if recipients_override is not None:
+        recipients = [r.strip() for r in recipients_override.split(",") if r.strip()]
+    else:
+        recipients = email_settings.get("recipients") or []
     report_path = Path(f"reports/report_{active_env}.html")
+
+    # _execution_type is set by pytest_configure above (SANITY/SMOKE/
+    # REGRESSION/ALL, from the -m marker expression this run used).
+    execution_label = _execution_type.title()
+    today = datetime.now().strftime("%d %B %Y")
+    body = (
+        "Hi Team,\n\n"
+        f"Please find attached the API {execution_label} test report for the "
+        f"{active_env.upper()} environment, run on {today}.\n\n"
+        "Regards,\n"
+        "QA Team"
+    )
 
     try:
         from src.utils.report_mailer import send_report_email
 
-        send_report_email(get_settings(), report_path, recipients)
+        send_report_email(get_settings(), report_path, recipients, summary_text=body)
     except Exception as exc:
         logger.warning("Failed to email report to %s: %s", recipients, exc)
 

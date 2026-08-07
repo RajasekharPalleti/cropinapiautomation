@@ -37,7 +37,6 @@ on:
         default: "sanity"
         type: choice
         options:
-          - all
           - sanity
           - smoke
           - regression
@@ -152,11 +151,11 @@ jobs:
           [ "$NOTIFY_SFPLUSQA" = "true" ] && RECIPIENTS="${RECIPIENTS:+$RECIPIENTS,}sfplusqa@cropin.com"
           export EMAIL_RECIPIENTS_OVERRIDE="$RECIPIENTS"
 
-          if [ "$MARKER_EXPR" = "all" ]; then
-            pytest --env="$ENV_TARGET"
-          else
-            pytest --env="$ENV_TARGET" -m "$MARKER_EXPR"
-          fi
+          # Every test already carries @pytest.mark.regression alongside its
+          # own sanity/smoke marker (see pyproject.toml's marker registry),
+          # so "-m regression" already selects the full suite — no separate
+          # no-filter "all" case needed.
+          pytest --env="$ENV_TARGET" -m "$MARKER_EXPR"
 
       - name: Upload HTML report
         if: always()

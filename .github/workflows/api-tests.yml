@@ -2,8 +2,12 @@ name: API Test Suite
 
 # Two triggers:
 #
-# 1. schedule — automatic, 10:30 AM IST (05:00 UTC) Monday-Friday. A
-#    scheduled run can't be prompted for input, so its parameters are
+# 1. schedule — automatic, 10:35 AM IST (05:05 UTC) Monday-Saturday. Offset
+#    5 minutes past the hour deliberately — GitHub's own docs warn that
+#    scheduled runs can be delayed or dropped at the top of the hour
+#    ("high load times include the start of every hour"), which is exactly
+#    what happened the first time this ran at :00 and never fired at all.
+#    A scheduled run can't be prompted for input, so its parameters are
 #    hardcoded in the "Resolve run parameters" step below: prod, sanity
 #    markers, cleanup on, all three recipients notified.
 #
@@ -15,7 +19,7 @@ name: API Test Suite
 # crop variety, plan, project, ...) in whichever environment is targeted.
 on:
   schedule:
-    - cron: "0 5 * * 1-5"
+    - cron: "5 5 * * 1-6"
   workflow_dispatch:
     inputs:
       environment:

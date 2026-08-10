@@ -256,7 +256,7 @@ That's it — send the API + payload + test type; if anything required is missin
 
 ## 8. CI (GitHub Actions)
 
-`.github/workflows/api-tests.yml` runs the suite on demand — **manual trigger only** (`workflow_dispatch`), by design: every create/update test writes a real record to whichever environment it targets, so nothing runs automatically on push. The workflow file's own comments show exactly how to add a schedule or push trigger later if you want one.
+`.github/workflows/api-tests.yml` runs the suite via `workflow_dispatch` only — by design, nothing runs automatically on `push`, since every create/update test writes a real record to whichever environment it targets. `workflow_dispatch` can be fired three ways: the Actions tab's "Run workflow" button, `gh workflow run api-tests.yml`, or an external cron pinger hitting the REST API dispatch endpoint on a schedule (see 8.4) — that last one is how the daily automated run works. GitHub's own native `schedule:` trigger was tried first and dropped: see 8.4 for why.
 
 ### 8.1 One-time setup — configuring this project in GitHub Actions
 
@@ -310,3 +310,25 @@ Add/remove addresses there directly, or flip `enabled` to `false` to turn it off
 **If "App Passwords" doesn't appear** even with 2-Step Verification on: your Google Workspace admin has likely disabled them organization-wide (common in managed/corporate Workspace accounts). In that case, either ask your admin to enable App Passwords for that specific account (Admin Console → Security → Authentication → App Passwords), ask if there's an internal SMTP relay instead, or fall back to a free-tier transactional email provider (e.g. SendGrid) — those support the same plain-SMTP relay shape, so it's just different values in the five fields above (`SMTP_HOST=smtp.sendgrid.net`, `SMTP_USERNAME=apikey`, `SMTP_PASSWORD=<your API key>`), no code changes needed either way.
 
 A send failure (missing/wrong SMTP config, network issue, etc.) is logged as a warning and never fails the test run itself — see `pytest_unconfigure` in `tests/conftest.py` and `src/utils/report_mailer.py`.
+
+### 8.4 Automating the daily run (external cron)
+
+This workflow originally used GitHub's own `schedule:` trigger (`cron: "5 5 * * 1-6"`, i.e. 10:35 AM IST Monday–Saturday). It was removed: GitHub explicitly documents scheduled workflows as best-effort — they can be delayed during high load, and in some cases **skipped entirely** — and both failure modes showed up in practice (one run fired 47 minutes late, a later day didn't fire at all). There's no fix for this from inside the workflow file; the trigger has to live outside GitHub.
+
+The replacement: an external cron service calls GitHub's REST API to fire `workflow_dispatch` directly, on its own schedule. Any "call this URL on a schedule" service works (cron-job.org is free and needs no account beyond an email); the request is the same regardless of provider:
+
+1. **Create a fine-grained GitHub token** — [github.com/settings/personal-access-tokens/new](https://github.com/settings/personal-access-tokens/new) → **Repository access**: "Only select repositories" → this repo → **Permissions** → **Actions**: "Read and write" → **Generate token**. Copy it once; it isn't shown again. (Scoped to just this repo and just Actions — much narrower than a classic PAT.)
+2. **Set up the scheduled HTTP call** on your chosen cron service, configured as:
+   - **Method**: `POST`
+   - **URL**: `https://api.github.com/repos/RajasekharPalleti/cropinapiautomation/actions/workflows/api-tests.yml/dispatches`
+   - **Headers**:
+     ```
+     Accept: application/vnd.github+json
+     Authorization: Bearer <the token from step 1>
+     X-GitHub-Api-Version: 2022-11-28
+     ```
+   - **Body**: `{"ref": "main"}` — no `inputs` needed since the defaults already match the daily run (prod, sanity, cleanup on, all three recipients); pass an `"inputs"` object here too if you ever want the automated run to use different values.
+   - **Schedule**: `5 5 * * 1-6` (10:35 AM IST / 05:05 UTC, Monday–Saturday) — or whatever cadence you want.
+3. **Verify**: after the next scheduled fire time, check GitHub → **Actions** tab — a new run should appear with "Triggered via workflow_dispatch" (there's no "Triggered by" avatar for a token-authenticated dispatch, which is expected).
+
+The token only ever lives inside the external cron service's own dashboard — it's never added as a GitHub Actions secret or checked into this repo.

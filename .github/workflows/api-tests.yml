@@ -9,8 +9,10 @@ name: API Test Suite
 #
 # Every run creates real records (farmer, asset, plan type, crop variety,
 # plan, project, ...) in whichever environment is targeted. Unspecified
-# inputs fall back to their defaults below (prod / sanity / cleanup on /
+# inputs fall back to their defaults below (prod / regression / cleanup on /
 # all three recipients), which is what the external cron pinger relies on.
+# The "markers" default is a standing choice, not a permanent one — change
+# it below whenever the daily run should target a different suite.
 on:
   workflow_dispatch:
     inputs:
@@ -26,7 +28,7 @@ on:
       markers:
         description: "Which tests to run"
         required: true
-        default: "sanity"
+        default: "regression"
         type: choice
         options:
           - sanity

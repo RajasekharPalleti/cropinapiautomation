@@ -327,7 +327,7 @@ The replacement: an external cron service calls GitHub's REST API to fire `workf
      Authorization: Bearer <the token from step 1>
      X-GitHub-Api-Version: 2022-11-28
      ```
-   - **Body**: `{"ref": "main"}` — no `inputs` needed since the defaults already match the daily run (prod, sanity, cleanup on, all three recipients); pass an `"inputs"` object here too if you ever want the automated run to use different values.
+   - **Body**: `{"ref": "main"}` — no `inputs` needed since the daily run just uses whatever the workflow file's current defaults are (currently prod, regression, cleanup on, all three recipients — see the `markers` default in `.github/workflows/api-tests.yml` if that ever needs to change); pass an `"inputs"` object here too if you want this specific external trigger to always use different values regardless of the workflow's defaults.
    - **Schedule**: `5 5 * * 1-6` (10:35 AM IST / 05:05 UTC, Monday–Saturday) — or whatever cadence you want.
 3. **Verify**: after the next scheduled fire time, check GitHub → **Actions** tab — a new run should appear with "Triggered via workflow_dispatch" (there's no "Triggered by" avatar for a token-authenticated dispatch, which is expected).
 

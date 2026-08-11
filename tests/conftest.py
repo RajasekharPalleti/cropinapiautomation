@@ -1,5 +1,7 @@
+import base64
 import functools
 import inspect
+import json
 import os
 from datetime import datetime
 from pathlib import Path
@@ -106,20 +108,31 @@ def pytest_runtest_makereport(item, call):
     """Attaches this test's relevant API calls (URL/payload/response,
     captured by ApiClient.call_log) as a clickable JSON extra in the HTML
     report — on the 'call' phase normally, or on 'setup' if setup itself
-    failed (no 'call' phase runs in that case). Two sources, combined:
+    failed (no 'call' phase runs in that case). Two sources, but never
+    combined — a test either made its own calls, or it didn't:
     1. Calls made directly during this test's own setup/call phases (a
        global read-offset, so each test only gets what's new since the
-       last one reported).
-    2. Calls already recorded against any fixture THIS TEST FUNCTION
-       directly declares as a parameter (see _CALLS_BY_FIXTURE /
-       tracked_fixture above) — this is what surfaces a call that
-       actually happened earlier, cached, for a test that's purely
-       "assert on the shared fixture's result." Uses the function's own
-       declared params, not item.fixturenames, since the latter also
-       includes autouse fixtures like cleanup_created_records — which
-       pulls in EVERY business fixture for EVERY test, and would
-       otherwise show the same huge combined list everywhere instead of
-       just what each test actually cares about.
+       last one reported). Whenever this test made at least one call of
+       its own, that's the whole story — shown as-is.
+    2. ONLY when this test made zero direct calls: calls already recorded
+       against any fixture THIS TEST FUNCTION directly declares as a
+       parameter (see _CALLS_BY_FIXTURE / tracked_fixture above) — this is
+       what surfaces a call that actually happened earlier, cached, for a
+       test that's purely "assert on the shared fixture's result." Uses
+       the function's own declared params, not item.fixturenames, since
+       the latter also includes autouse fixtures like
+       cleanup_created_records — which pulls in EVERY business fixture for
+       EVERY test, and would otherwise show the same huge combined list
+       everywhere instead of just what each test actually cares about.
+
+       Falling back to fixture_calls ONLY when direct_calls is empty
+       matters for tests like test_verify_croppable_area_variety_and_sowing_date,
+       which makes its own fresh GET AND names croppable_area_update_response
+       as a parameter (just to read its sowingDate for comparison) —
+       without this guard, that test would show its own GET plus the
+       unrelated GET+PUT another test already triggered and reported,
+       inflating "1 call" into "3 calls" for no reason tied to what this
+       test itself actually did.
     """
     outcome = yield
     report = outcome.get_result()
@@ -132,11 +145,13 @@ def pytest_runtest_makereport(item, call):
     direct_calls = _LAST_API_CLIENT.call_log[_api_call_log_offset:]
     _api_call_log_offset = len(_LAST_API_CLIENT.call_log)
 
-    fixture_calls = []
-    for param_name in inspect.signature(item.function).parameters:
-        fixture_calls.extend(_CALLS_BY_FIXTURE.get(param_name, []))
+    if direct_calls:
+        all_calls = direct_calls
+    else:
+        all_calls = []
+        for param_name in inspect.signature(item.function).parameters:
+            all_calls.extend(_CALLS_BY_FIXTURE.get(param_name, []))
 
-    all_calls = fixture_calls + direct_calls
     if all_calls:
         report_extras = getattr(report, "extras", [])
         report_extras.append(extras.json(all_calls, name=f"API Calls ({len(all_calls)})"))
@@ -264,6 +279,7 @@ def _record_cleanup(
     status=None,
     success=None,
     note: str | None = None,
+    calls: list[dict] | None = None,
 ) -> None:
     """Pass either `response` (a single ApiResponse — status/success are
     read off it) or explicit `status`/`success` (for multi-step cleanup
@@ -271,7 +287,16 @@ def _record_cleanup(
     no single response to point at). Leaving all of status/success/response
     unset means this step hasn't been wired in yet (endpoint not provided)
     — rendered as "Not implemented yet" rather than looking like an
-    attempted-and-failed delete."""
+    attempted-and-failed delete.
+
+    `calls` is this cleanup step's own slice of ApiClient.call_log (see
+    cleanup_created_records below, which snapshots the log before/after
+    each step) — rendered as its own "API Calls" link in the Cleanup
+    section, same shape as a test's, but kept strictly separate: cleanup
+    always runs in this fixture's teardown, after every test's own report
+    has already been built and _api_call_log_offset already advanced past
+    it (see cleanup_created_records' final offset bump), so these calls
+    never get attributed to any test."""
     if response is not None:
         status = response.status
         success = response.ok
@@ -284,24 +309,27 @@ def _record_cleanup(
             "status": status,
             "success": success,
             "note": note,
+            "calls": calls or [],
         }
     )
 
 
-def _record_bulk_delete(entity_type: str, entity_id, response) -> None:
+def _record_bulk_delete(entity_type: str, entity_id, response, calls: list[dict] | None = None) -> None:
     """For the farmer/asset/variety bulk-delete endpoints
     (DELETE {resource_path}/bulk?ids=...) — a 200 alone doesn't mean the
     record was actually deleted, the body reports that as
     {"deletable": N, "nonDeletable": N}, so success is judged off the body,
     not just the HTTP status."""
     if response.status != 200:
-        _record_cleanup(entity_type, entity_id, status=response.status, success=False, note=response.text())
+        _record_cleanup(
+            entity_type, entity_id, status=response.status, success=False, note=response.text(), calls=calls
+        )
         return
     body = response.json()
     success = body.get("nonDeletable", 0) == 0 and body.get("deletable", 0) >= 1
     _record_cleanup(
         entity_type, entity_id, status=response.status, success=success,
-        note=None if success else f"response: {body}",
+        note=None if success else f"response: {body}", calls=calls,
     )
 
 
@@ -381,6 +409,18 @@ window.addEventListener('DOMContentLoaded', function () {
 """
 
 
+def _api_calls_link(calls: list[dict]) -> str:
+    """Renders a cleanup step's own API calls as the exact same kind of
+    link pytest-html emits for a test's JSON extra (same class, same
+    data-URI shape — see selfcontained_report.py) — reuses the click
+    handler already registered in _API_CALLS_MODAL_SCRIPT with no new JS."""
+    if not calls:
+        return "-"
+    encoded = base64.b64encode(json.dumps(calls).encode("utf-8")).decode("utf-8")
+    href = f"data:application/json;charset=utf-8;base64,{encoded}"
+    return f'<a class="col-links__extra json" href="{href}">API Calls ({len(calls)})</a>'
+
+
 def pytest_html_results_summary(prefix, summary, postfix):
     """Adds the API-calls modal (see _API_CALLS_MODAL_SCRIPT) to every
     report, then — if this run produced any — renders _CLEANUP_LOG as its
@@ -401,7 +441,7 @@ def pytest_html_results_summary(prefix, summary, postfix):
         rows.append(
             f"<tr><td>{c['entity_type']}</td><td>{c['entity_id']}</td>"
             f"<td>{c['status'] if c['status'] is not None else '-'}</td>"
-            f"<td>{result}</td></tr>"
+            f"<td>{result}</td><td>{_api_calls_link(c.get('calls'))}</td></tr>"
         )
     # pytest-html only exposes a hook for the summary area, which renders
     # ABOVE the results table — there's no hook for content after it. To
@@ -423,7 +463,7 @@ def pytest_html_results_summary(prefix, summary, postfix):
             "</style>",
             "<h2>Cleanup &mdash; Deleted Test Records</h2>",
             "<table id='cleanup-table'>"
-            "<thead><tr><th>Entity</th><th>ID</th><th>HTTP Status</th><th>Result</th></tr></thead>"
+            "<thead><tr><th>Entity</th><th>ID</th><th>HTTP Status</th><th>Result</th><th>API Calls</th></tr></thead>"
             f"<tbody>{''.join(rows)}</tbody></table>",
             "</div>",
             "<script>"
@@ -954,6 +994,12 @@ def cleanup_created_records(
     def _created(response):
         return response is not None and response.status == 201
 
+    def _log_len():
+        return len(_LAST_API_CLIENT.call_log) if _LAST_API_CLIENT is not None else 0
+
+    def _calls_since(start):
+        return _LAST_API_CLIENT.call_log[start:] if _LAST_API_CLIENT is not None else []
+
     created_project = _CREATED_RECORDS.get("project")
     created_asset = _CREATED_RECORDS.get("asset")
     created_farmer = _CREATED_RECORDS.get("farmer")
@@ -1001,11 +1047,12 @@ def cleanup_created_records(
             note="Skipped — project creation failed this run, no real croppable area to clean up",
         )
     else:
+        step_start = _log_len()
         close_response = project_service.close_croppable_areas(croppable_area_ids)
         if close_response.status != 200:
             _record_cleanup(
                 "croppable_area", croppable_area_ids, status=close_response.status, success=False,
-                note=f"close failed: {close_response.text()}",
+                note=f"close failed: {close_response.text()}", calls=_calls_since(step_start),
             )
         else:
             remove_response = project_service.remove_project_assets(
@@ -1014,7 +1061,7 @@ def cleanup_created_records(
             if remove_response.status != 202:
                 _record_cleanup(
                     "croppable_area", croppable_area_ids, status=remove_response.status, success=False,
-                    note=f"remove failed: {remove_response.text()}",
+                    note=f"remove failed: {remove_response.text()}", calls=_calls_since(step_start),
                 )
             else:
                 process_id = remove_response.json().get("id")
@@ -1023,15 +1070,15 @@ def cleanup_created_records(
                 success = final.get("status") == "COMPLETED" and failed_count == 0
                 _record_cleanup(
                     "croppable_area", croppable_area_ids, status=final.get("status"), success=success,
-                    note=None if success else f"final: {final}",
+                    note=None if success else f"final: {final}", calls=_calls_since(step_start),
                 )
 
     # 2. Delete crop variety — DELETE {resource_path}/bulk?ids=... (bulk-delete shape).
     # Skipped if the variety was never actually created this run.
     if _created(created_crop_variety):
-        _record_bulk_delete(
-            "crop_variety", created_crop_variety_id, crop_variety_service.delete_bulk([created_crop_variety_id])
-        )
+        step_start = _log_len()
+        response = crop_variety_service.delete_bulk([created_crop_variety_id])
+        _record_bulk_delete("crop_variety", created_crop_variety_id, response, calls=_calls_since(step_start))
     else:
         _record_cleanup(
             "crop_variety", created_crop_variety_id,
@@ -1041,7 +1088,9 @@ def cleanup_created_records(
     # 3. Delete asset — DELETE {resource_path}/bulk?ids=... (bulk-delete shape).
     # Skipped if the asset was never actually created this run.
     if _created(created_asset):
-        _record_bulk_delete("asset", created_asset_id, asset_service.delete_bulk([created_asset_id]))
+        step_start = _log_len()
+        response = asset_service.delete_bulk([created_asset_id])
+        _record_bulk_delete("asset", created_asset_id, response, calls=_calls_since(step_start))
     else:
         _record_cleanup(
             "asset", created_asset_id, note="Skipped — creation failed this run, no real record to delete"
@@ -1050,7 +1099,9 @@ def cleanup_created_records(
     # 4. Delete farmer — DELETE {resource_path}/bulk?ids=... (bulk-delete shape).
     # Skipped if the farmer was never actually created this run.
     if _created(created_farmer):
-        _record_bulk_delete("farmer", created_farmer_id, farmer_service.delete_bulk([created_farmer_id]))
+        step_start = _log_len()
+        response = farmer_service.delete_bulk([created_farmer_id])
+        _record_bulk_delete("farmer", created_farmer_id, response, calls=_calls_since(step_start))
     else:
         _record_cleanup(
             "farmer", created_farmer_id, note="Skipped — creation failed this run, no real record to delete"
@@ -1066,11 +1117,12 @@ def cleanup_created_records(
     else:
         # Async, like start-execution: the POST only returns an IN_PROGRESS
         # job id, so poll it to completion before recording success/failure.
+        step_start = _log_len()
         stop_response = project_service.stop_execution(created_project_id)
         if stop_response.status != 200:
             _record_cleanup(
                 "project (stop-execution)", created_project_id, status=stop_response.status,
-                success=False, note=stop_response.text(),
+                success=False, note=stop_response.text(), calls=_calls_since(step_start),
             )
         else:
             stop_process_id = stop_response.json().get("id")
@@ -1078,5 +1130,15 @@ def cleanup_created_records(
             success = final.get("status") == "COMPLETED"
             _record_cleanup(
                 "project (stop-execution)", created_project_id, status=final.get("status"),
-                success=success, note=None if success else f"final: {final}",
+                success=success, note=None if success else f"final: {final}", calls=_calls_since(step_start),
             )
+
+    # Marks every call made during this teardown as already "consumed," so
+    # that even if some future test collection order ever put another test
+    # after this one (this fixture's teardown always runs dead last today,
+    # since it's the sole autouse session fixture every test depends on),
+    # pytest_runtest_makereport's offset-based direct_calls would start
+    # clean from here rather than sweeping up these cleanup calls as if
+    # that later test had made them itself.
+    global _api_call_log_offset
+    _api_call_log_offset = _log_len()

@@ -2,6 +2,11 @@
 minversion = "8.0"
 addopts = "-ra -q --html=reports/report.html --self-contained-html"
 testpaths = ["tests"]
+# pytest-html defaults to sorting the report by Result (grouping
+# Failed/Passed/Skipped together), which scrambles the deliberate
+# business-flow order tests/conftest.py's pytest_collection_modifyitems
+# puts tests in. "original" renders them in the exact order they ran.
+initial_sort = "original"
 markers = [
     "sanity: quick per-API happy-path check, narrower than smoke",
     "smoke: critical path checks, run on every commit",

@@ -333,6 +333,30 @@ def _record_bulk_delete(entity_type: str, entity_id, response, calls: list[dict]
     )
 
 
+def _record_delete_by_status(entity_type: str, entity_id, response, calls: list[dict] | None = None) -> None:
+    """For bulk-delete endpoints whose real response shape isn't confirmed
+    (plan/plan type — only their URLs were given, not a sample delete
+    response), unlike farmer/asset/crop variety's confirmed
+    {"deletable": N, "nonDeletable": N} body (see _record_bulk_delete
+    above). Success is judged by status + absence of an error in the body,
+    not a specific body shape: ok status, and if the body is a JSON object
+    carrying an "error" field, that still counts as a failure even at a
+    2xx status."""
+    success = response.ok
+    note = None
+    if success:
+        try:
+            body = response.json()
+        except ValueError:
+            body = None
+        if isinstance(body, dict) and body.get("error"):
+            success = False
+            note = f"response: {body}"
+    if not success and note is None:
+        note = response.text()
+    _record_cleanup(entity_type, entity_id, status=response.status, success=success, note=note, calls=calls)
+
+
 _API_CALLS_MODAL_SCRIPT = """
 <style>
 .api-modal-overlay{display:none;position:fixed;inset:0;background:rgba(15,17,21,0.55);
@@ -676,9 +700,11 @@ def created_asset_id(created_asset):
 def created_plantype(plantype_service):
     """The one plan type create() response for the whole run —
     test_create_plantype asserts on this directly."""
-    return plantype_service.create(
+    response = plantype_service.create(
         plantype_service.build_create_payload(load_test_data("plantype", "create_valid"))
     )
+    _CREATED_RECORDS["plantype"] = response
+    return response
 
 
 @pytest.fixture(scope="session")
@@ -774,6 +800,7 @@ def created_plan(plan_service, created_plantype_id, created_crop_variety_id) -> 
         load_test_data("plan", "create_valid"), created_plantype_id, created_crop_variety_id
     )
     response = plan_service.create(payload)
+    _CREATED_RECORDS["plan"] = response
     return {"response": response, "payload": payload}
 
 
@@ -937,14 +964,19 @@ def cleanup_created_records(
     asset_service,
     farmer_service,
     crop_variety_service,
+    plantype_service,
+    plan_service,
 ):
     """Session-scoped teardown: after all tests finish, cleans up this
     run's real records in the required order — close the croppable area(s),
-    then delete them (POST remove/selected-ids), then variety, then asset,
-    then farmer, and stop the project's execution last (per the user's
-    specified order). Results go into _CLEANUP_LOG for the separate
-    "Cleanup" report section (see pytest_html_results_summary above), not
-    the normal pass/fail rows.
+    then delete them (POST remove/selected-ids), then the plan (it's linked
+    to the crop variety, so it has to go before the variety itself can be
+    deleted), then variety, then asset, then farmer, then stop the
+    project's execution, and finally delete the plan type last of all,
+    once every other record is already gone (per the user's specified
+    order). Results go into _CLEANUP_LOG for the separate "Cleanup" report
+    section (see pytest_html_results_summary above), not the normal
+    pass/fail rows.
 
     Each step only runs if that entity's own create() call actually
     succeeded (status 201) THIS run — ids are extracted from the raw
@@ -971,11 +1003,15 @@ def cleanup_created_records(
     fixtures get triggered anyway; revisit if selective marker-based runs
     become common.
 
-    Asset/farmer/crop variety deletes are the bulk-delete shape
-    `DELETE {resource_path}/bulk?ids=...` (BaseService.delete_bulk) — a 200
-    alone doesn't mean the record was deleted, so success is judged off the
-    response body's `{"deletable": N, "nonDeletable": N}` (see
-    _record_bulk_delete above), not just the HTTP status.
+    Asset/farmer/crop variety/plan/plan type deletes are all the same
+    `DELETE {resource_path}/bulk?ids=...` shape (BaseService.delete_bulk),
+    but judged for success two different ways depending on what's actually
+    confirmed: asset/farmer/crop variety are confirmed (against real
+    responses) to report `{"deletable": N, "nonDeletable": N}` in the body,
+    so a 200 alone isn't enough — see _record_bulk_delete. Plan/plan type
+    only ever had their URL given, not a sample delete response, so those
+    two are judged by status + absence of an error in the body instead —
+    see _record_delete_by_status.
 
     The whole teardown can be turned off via test data —
     settings.cleanup.enabled in test_data/<env>.json — without touching
@@ -994,6 +1030,19 @@ def cleanup_created_records(
     def _created(response):
         return response is not None and response.status == 201
 
+    def _extract_plan_id(response):
+        # Plan create() is the odd one out — 200, not 201, and the body is
+        # a list (not a single object), same shape created_plan_id (above)
+        # already handles for the test-facing fixture.
+        if response is None or response.status != 200:
+            return None
+        body = response.json()
+        if isinstance(body, list) and body:
+            return body[0].get("id")
+        if isinstance(body, dict):
+            return body.get("id")
+        return None
+
     def _log_len():
         return len(_LAST_API_CLIENT.call_log) if _LAST_API_CLIENT is not None else 0
 
@@ -1004,6 +1053,8 @@ def cleanup_created_records(
     created_asset = _CREATED_RECORDS.get("asset")
     created_farmer = _CREATED_RECORDS.get("farmer")
     created_crop_variety = _CREATED_RECORDS.get("crop_variety")
+    created_plantype = _CREATED_RECORDS.get("plantype")
+    created_plan = _CREATED_RECORDS.get("plan")
     probable_assets_response = _CREATED_RECORDS.get("probable_assets") or {}
     self_validate_response = _CREATED_RECORDS.get("self_validate") or {}
 
@@ -1011,6 +1062,8 @@ def cleanup_created_records(
     created_asset_id = _extract_id(created_asset)
     created_farmer_id = _extract_id(created_farmer)
     created_crop_variety_id = _extract_id(created_crop_variety)
+    created_plantype_id = _extract_id(created_plantype)
+    created_plan_id = _extract_plan_id(created_plan)
     project_asset_ids = probable_assets_response.get("projectAssetIds") or []
     croppable_area_ids = self_validate_response.get("croppableAreaIds") or []
 
@@ -1073,7 +1126,22 @@ def cleanup_created_records(
                     note=None if success else f"final: {final}", calls=_calls_since(step_start),
                 )
 
-    # 2. Delete crop variety — DELETE {resource_path}/bulk?ids=... (bulk-delete shape).
+    # 2. Delete the plan — DELETE {resource_path}/bulk?ids=... . Linked to
+    # the crop variety (and plan type), so it has to be removed before the
+    # variety itself can be deleted. Success is judged by status + no error
+    # in the body (see _record_delete_by_status) rather than the
+    # deletable/nonDeletable shape, since only the URL was given for this
+    # one. Skipped if the plan was never actually created this run.
+    if created_plan_id is not None:
+        step_start = _log_len()
+        response = plan_service.delete_bulk([created_plan_id])
+        _record_delete_by_status("plan", created_plan_id, response, calls=_calls_since(step_start))
+    else:
+        _record_cleanup(
+            "plan", created_plan_id, note="Skipped — creation failed this run, no real record to delete"
+        )
+
+    # 3. Delete crop variety — DELETE {resource_path}/bulk?ids=... (bulk-delete shape).
     # Skipped if the variety was never actually created this run.
     if _created(created_crop_variety):
         step_start = _log_len()
@@ -1085,7 +1153,7 @@ def cleanup_created_records(
             note="Skipped — creation failed this run, no real record to delete",
         )
 
-    # 3. Delete asset — DELETE {resource_path}/bulk?ids=... (bulk-delete shape).
+    # 4. Delete asset — DELETE {resource_path}/bulk?ids=... (bulk-delete shape).
     # Skipped if the asset was never actually created this run.
     if _created(created_asset):
         step_start = _log_len()
@@ -1096,7 +1164,7 @@ def cleanup_created_records(
             "asset", created_asset_id, note="Skipped — creation failed this run, no real record to delete"
         )
 
-    # 4. Delete farmer — DELETE {resource_path}/bulk?ids=... (bulk-delete shape).
+    # 5. Delete farmer — DELETE {resource_path}/bulk?ids=... (bulk-delete shape).
     # Skipped if the farmer was never actually created this run.
     if _created(created_farmer):
         step_start = _log_len()
@@ -1107,8 +1175,8 @@ def cleanup_created_records(
             "farmer", created_farmer_id, note="Skipped — creation failed this run, no real record to delete"
         )
 
-    # 5. Stop the project's execution — last step. Skipped if the project
-    # was never actually created this run.
+    # 6. Stop the project's execution. Skipped if the project was never
+    # actually created this run.
     if not project_created:
         _record_cleanup(
             "project (stop-execution)", created_project_id,
@@ -1132,6 +1200,20 @@ def cleanup_created_records(
                 "project (stop-execution)", created_project_id, status=final.get("status"),
                 success=success, note=None if success else f"final: {final}", calls=_calls_since(step_start),
             )
+
+    # 7. Delete plan type — DELETE {resource_path}/bulk?ids=... . Last step
+    # of all, run only once every other record above is already cleaned
+    # up. Success is judged by status + no error in the body (see
+    # _record_delete_by_status), same reasoning as the plan step above.
+    # Skipped if the plan type was never actually created this run.
+    if _created(created_plantype):
+        step_start = _log_len()
+        response = plantype_service.delete_bulk([created_plantype_id])
+        _record_delete_by_status("plantype", created_plantype_id, response, calls=_calls_since(step_start))
+    else:
+        _record_cleanup(
+            "plantype", created_plantype_id, note="Skipped — creation failed this run, no real record to delete"
+        )
 
     # Marks every call made during this teardown as already "consumed," so
     # that even if some future test collection order ever put another test

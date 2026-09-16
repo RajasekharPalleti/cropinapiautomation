@@ -83,6 +83,12 @@ cropin-api-automation/
 │   └── schemas/                    # JSON Schema files used by assert_json_schema
 │       └── token_response.json
 │
+├── docs/
+│   └── Cropin_API_Test_Scenarios.xlsx  # Test-case catalogue — regenerated, not hand-edited (see section 6)
+│
+├── scripts/
+│   └── build_test_scenarios_xlsx.py    # Regenerates docs/Cropin_API_Test_Scenarios.xlsx from its own ROWS list
+│
 ├── reports/                        # pytest-html output per environment (gitignored)
 ├── .env.example                    # Template for local secrets — copy to .env
 ├── pytest.ini / pyproject.toml     # pytest config, markers, black/ruff/mypy config
@@ -219,7 +225,7 @@ python -m intake.validate_from_file path/to/spec.json
 }
 ```
 
-Once it validates, the same four steps apply every time:
+Once it validates, the same five steps apply every time:
 
 1. **Service**: set `resource_path` on `src/services/<module>_service.py` (add a non-CRUD method if the call doesn't fit `create`/`get_by_id`/`list`/`update`/`delete`).
 2. **Test data**: add the payload as a named scenario under that module's section in `test_data/qa.json` (and `uat.json`/`prod.json` once real per-env values are known), e.g. `"farmer": {"create_valid": {...}, "create_missing_name": {...}}`.
@@ -243,7 +249,9 @@ def test_create_farmer_missing_name(farmer_service):
     assert_status(response, 400)
 ```
 
-That's it — send the API + payload + test type; if anything required is missing or inconsistent, you'll get asked for it instead of the agent guessing, then these four pieces get filled in.
+5. **Test-case catalogue**: append a row for the new test to `ROWS` in `scripts/build_test_scenarios_xlsx.py` (Test Case ID `TC-<MODULE>-NNN`, name, test type, what it does, APIs used), then run `python scripts/build_test_scenarios_xlsx.py` to regenerate `docs/Cropin_API_Test_Scenarios.xlsx`. Don't hand-edit the `.xlsx` — the script is the source of truth and a regeneration would overwrite direct edits.
+
+That's it — send the API + payload + test type; if anything required is missing or inconsistent, you'll get asked for it instead of the agent guessing, then these five pieces get filled in.
 
 ## 7. Conventions
 

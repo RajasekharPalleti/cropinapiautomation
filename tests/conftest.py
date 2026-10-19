@@ -3,6 +3,7 @@ import functools
 import inspect
 import json
 import os
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -19,9 +20,11 @@ from src.services.asset_service import AssetService
 from src.services.auth_service import AuthService
 from src.services.crop_variety_service import CropVarietyService
 from src.services.farmer_service import FarmerService
+from src.services.form_service import FormService
 from src.services.plan_service import PlanService
 from src.services.plantype_service import PlanTypeService
 from src.services.project_service import ProjectService
+from src.services.task_service import TaskService
 from src.utils.hard_assert import hard_assert
 from src.utils.logger import get_logger
 from src.utils.test_data_loader import load_test_data
@@ -209,6 +212,35 @@ def pytest_html_report_title(report):
     report.title = f"Cropin API Automation Report ({active_env}) — {_execution_type}"
 
 
+# One entry per recorded test outcome this run (see pytest_runtest_logreport);
+# pytest_unconfigure turns it into the result block of the report email.
+_run_results: list[dict] = []
+
+
+def pytest_runtest_logreport(report):
+    """Records each test's outcome for the report email: the 'call' phase's
+    result, plus a setup/teardown phase only when it failed (an error) or,
+    for setup, skipped the test. Expected failures are kept apart from real
+    ones."""
+    if report.when == "call":
+        if hasattr(report, "wasxfail"):
+            outcome = "xpassed" if report.passed else "xfailed"
+        else:
+            outcome = report.outcome
+    elif report.failed:
+        outcome = "error"
+    elif report.when == "setup" and report.skipped:
+        outcome = "skipped"
+    else:
+        return
+
+    reason = ""
+    if outcome in ("failed", "error"):
+        crash = getattr(report.longrepr, "reprcrash", None)
+        reason = crash.message if crash is not None else str(report.longrepr)
+    _run_results.append({"test": report.nodeid, "outcome": outcome, "reason": reason})
+
+
 def pytest_unconfigure(config):
     """Emails the generated HTML report — prod only, and only when
     test_data/prod.json -> settings.email_report.enabled is true (so
@@ -248,17 +280,18 @@ def pytest_unconfigure(config):
     # REGRESSION/ALL, from the -m marker expression this run used).
     execution_label = _execution_type.title()
     today = datetime.now().strftime("%d %B %Y")
-    body = (
-        "Hi Team,\n\n"
-        f"Please find attached the API {execution_label} test report for the "
-        f"{active_env.upper()} environment, run on {today}.\n\n"
-        "Regards,\n"
-        "QA Team"
-    )
 
     try:
-        from src.utils.report_mailer import send_report_email
+        from src.utils.report_mailer import format_results_summary, send_report_email
 
+        body = (
+            "Hi Team,\n\n"
+            f"Please find attached the API {execution_label} test report for the "
+            f"{active_env.upper()} environment, run on {today}.\n\n"
+            f"{format_results_summary(_run_results)}\n\n"
+            "Regards,\n"
+            "QA Team"
+        )
         send_report_email(get_settings(), report_path, recipients, summary_text=body)
     except Exception as exc:
         logger.warning("Failed to email report to %s: %s", recipients, exc)
@@ -355,6 +388,32 @@ def _record_delete_by_status(entity_type: str, entity_id, response, calls: list[
     if not success and note is None:
         note = response.text()
     _record_cleanup(entity_type, entity_id, status=response.status, success=success, note=note, calls=calls)
+
+
+def _record_delete_by_ids(entity_type: str, entity_id, response, calls: list[dict] | None = None) -> None:
+    """For the form bulk-delete (DELETE {resource_path}/bulk?ids=...), whose
+    body has a different shape from farmer/asset/variety's
+    {"deletable": N, "nonDeletable": N} (see _record_bulk_delete):
+    {"nonDeletedIds": [...], "deletedIds": [...]}. A 200 alone isn't enough —
+    success is the id being in deletedIds AND nonDeletedIds being empty;
+    anything else is a failed cleanup row carrying the response body."""
+    if response.status != 200:
+        _record_cleanup(
+            entity_type, entity_id, status=response.status, success=False, note=response.text(), calls=calls
+        )
+        return
+    try:
+        body = response.json()
+    except ValueError:
+        body = None
+    deleted = {str(i) for i in (body.get("deletedIds") or [])} if isinstance(body, dict) else set()
+    success = (
+        isinstance(body, dict) and str(entity_id) in deleted and not (body.get("nonDeletedIds") or [])
+    )
+    _record_cleanup(
+        entity_type, entity_id, status=response.status, success=success,
+        note=None if success else f"response: {body if body is not None else response.text()}", calls=calls,
+    )
 
 
 _API_CALLS_MODAL_SCRIPT = """
@@ -524,6 +583,23 @@ _TEST_FILE_ORDER = [
     "tests/project/test_execute_project.py",  # (not in the given list — see above)
     "tests/project/test_update_croppable_area.py",  # update crop variety + sowing date to CA
     "tests/project/test_verify_croppable_area.py",  # verify the variety and sowing date is added
+    # Task fill — runs on the plan's tasks once they've been pulled onto the
+    # croppable area, and (like everything above) well before the teardown
+    # in cleanup_created_records, which only fires at the very end of the run.
+    "tests/task/test_task_fill_positive.py",
+    "tests/task/test_task_fill_negative.py",
+    "tests/task/test_task_fill_boundary.py",
+    "tests/task/test_task_fill_integrity.py",
+    "tests/task/test_task_fill_regression.py",
+    "tests/task/test_task_fill_security.py",
+    # Form — needs the run's crop variety and farmer (both created earlier),
+    # and still comes before the teardown, which deletes the form (step 3 of
+    # cleanup_created_records). There is no delete API for filled forms, so
+    # the filled form stays behind.
+    "tests/form/test_create_form.py",  # form creation
+    "tests/form/test_update_form.py",  # form update (name only)
+    "tests/form/test_fill_form.py",  # fill the (updated) form for the farmer
+    "tests/form/test_form_negative.py",  # refused requests — after the happy path
 ]
 
 
@@ -626,6 +702,16 @@ def project_service(api_client) -> ProjectService:
 @pytest.fixture(scope="session")
 def plan_service(api_client) -> PlanService:
     return PlanService(api_client)
+
+
+@pytest.fixture(scope="session")
+def task_service(api_client) -> TaskService:
+    return TaskService(api_client)
+
+
+@pytest.fixture(scope="session")
+def form_service(api_client) -> FormService:
+    return FormService(api_client)
 
 
 # --- Session-scoped "created_X" (raw response) + "created_X_id" (asserted,
@@ -958,6 +1044,158 @@ def croppable_area_update_response(project_service, croppable_area_ids, created_
     return put_response.json()
 
 
+def _form_id_or_none(created_form: dict):
+    """The id off the form create() response, or None if creation didn't
+    succeed (or the body isn't the expected JSON object). Never raises."""
+    response = created_form["response"]
+    if response.status not in (200, 201):
+        return None
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    return body.get("id") if isinstance(body, dict) else None
+
+
+@pytest.fixture(scope="session")
+def form_client_id() -> str:
+    """The run's one clientId for the form: a fresh uuid4, generated once per
+    run (never hardcoded, never from test data) and used as the clientId of
+    the form create body, kept unchanged by the update (whose body is the
+    create response) and sent as the clientId of the fill — create, update and
+    fill all share this value."""
+    return str(uuid.uuid4())
+
+
+@pytest.fixture(scope="session")
+@tracked_fixture
+def created_form(form_service, created_crop_variety_id, form_client_id) -> dict:
+    """The one form create() call for the whole run (linked to the shared
+    crop variety, carrying the run's form_client_id) — test_create_form_success
+    asserts on this directly.
+    Also exposes the exact payload used (its generated unique name, the
+    validity dates), which the stored-form check, the update and the fill
+    read. Registers the raw create response in _CREATED_RECORDS so
+    cleanup_created_records can delete the form at the end of the run (before
+    the crop variety it is linked to)."""
+    payload = form_service.build_create_payload(
+        load_test_data("form", "create_valid"), created_crop_variety_id, form_client_id
+    )
+    response = form_service.create(payload)
+    _CREATED_RECORDS["form"] = response
+    return {"response": response, "payload": payload}
+
+
+@pytest.fixture(scope="session")
+def created_form_id(created_form):
+    """The shared form's id — session-created only, no test-data fallback.
+    Skips dependent tests/fixtures if create failed — see created_farmer_id
+    above for why."""
+    form_id = _form_id_or_none(created_form)
+    if form_id:
+        return form_id
+    pytest.skip(
+        f"Form creation failed this run (status {created_form['response'].status}) — "
+        "skipping tests that need created_form_id"
+    )
+
+
+@pytest.fixture(scope="session")
+@tracked_fixture
+def stored_form(form_service, created_form):
+    """A fresh GET of the shared form (not the create() echo), made once —
+    test_create_form_success checks the form was really stored. None when
+    creation failed: deliberately does not skip, so that test fails on its own
+    create assertions instead of being skipped along with this fixture."""
+    form_id = _form_id_or_none(created_form)
+    if not form_id:
+        return None
+    return form_service.get_by_id(form_id)
+
+
+@pytest.fixture(scope="session")
+@tracked_fixture
+def updated_form(form_service, created_form, created_form_id, stored_form) -> dict:
+    """The one form update for the whole run — test_update_form_success
+    asserts on this directly. PUTs the form's create() response back with
+    only the name changed. Depends on stored_form (the create test's GET,
+    taken once) purely so that GET always happens BEFORE this update and the
+    create test sees the form as created. Never raises: a failed PUT shows up
+    as that test's own assertion failing. Also exposes the exact body sent
+    and the create payload (the form as created), which the test compares
+    against."""
+    payload = form_service.build_update_payload(
+        created_form["response"].json(), load_test_data("form", "update_valid")
+    )
+    response = form_service.update(payload)
+    return {"response": response, "payload": payload, "created_payload": created_form["payload"]}
+
+
+@pytest.fixture(scope="session")
+@tracked_fixture
+def stored_updated_form(form_service, updated_form, created_form_id):
+    """A fresh GET of the shared form after the update, made once —
+    test_update_form_success checks the new name was really stored. None when
+    the PUT didn't succeed, so that test fails on its own PUT assertion."""
+    if updated_form["response"].status != 200:
+        return None
+    return form_service.get_by_id(created_form_id)
+
+
+@pytest.fixture(scope="session")
+@tracked_fixture
+def filled_form(
+    form_service, farmer_service, created_form, updated_form, created_form_id,
+    created_farmer, created_farmer_id, form_client_id,
+) -> dict:
+    """Fills the shared form for the shared farmer EXACTLY ONCE for the whole
+    run — test_fill_form_success asserts on this directly, and reads the
+    filled form back through stored_filled_form below. Runs after the form
+    update (depends on updated_form), carries the run's form_client_id as its
+    clientId, and sends the form's CURRENT name: the
+    updated one if the update returned 200, otherwise the name it was created
+    with. The farmer's name is read with a fresh GET (test_edit_farmer appends
+    a timestamp to it earlier in the run), falling back to the create()
+    response's firstName. Never raises: a failed fill shows up as that test's
+    own assertion failing, not as a cascading fixture error. Also exposes the
+    exact payload sent. There is no delete API for filled forms, so this
+    record is not cleaned up."""
+    farmer_response = farmer_service.get_by_id(created_farmer_id)
+    farmer_name = farmer_response.json().get("firstName") if farmer_response.status == 200 else None
+    if not farmer_name:
+        farmer_name = created_farmer.json().get("firstName")
+    current_form = dict(created_form["payload"])
+    if updated_form["response"].status == 200:
+        current_form["name"] = updated_form["payload"]["name"]
+    payload = form_service.build_fill_payload(
+        load_test_data("form", "fill_valid"), current_form, created_form_id,
+        created_farmer_id, farmer_name, form_client_id,
+    )
+    response = form_service.fill(payload)
+    return {"response": response, "payload": payload}
+
+
+@pytest.fixture(scope="session")
+@tracked_fixture
+def stored_filled_form(form_service, filled_form):
+    """A fresh GET of the filled form (by the id the fill POST returned), made
+    once — test_fill_form_success cross-checks it with the POST response, so
+    the fill is verified by an independent read and not just its own echo.
+    None when the POST didn't succeed or returned no id: deliberately neither
+    raises nor skips, so that test fails on its own POST assertions instead."""
+    response = filled_form["response"]
+    if not 200 <= response.status < 300:
+        return None
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    filled_id = body.get("id") if isinstance(body, dict) else None
+    if not filled_id:
+        return None
+    return form_service.get_filled(filled_id)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def cleanup_created_records(
     project_service,
@@ -966,21 +1204,26 @@ def cleanup_created_records(
     crop_variety_service,
     plantype_service,
     plan_service,
+    form_service,
 ):
     """Session-scoped teardown: after all tests finish, cleans up this
     run's real records in the required order — close the croppable area(s),
     then delete them (POST remove/selected-ids), then the plan (it's linked
     to the crop variety, so it has to go before the variety itself can be
-    deleted), then variety, then asset, then farmer, then stop the
-    project's execution, and finally delete the plan type last of all,
-    once every other record is already gone (per the user's specified
-    order). Results go into _CLEANUP_LOG for the separate "Cleanup" report
+    deleted), then the form (its varietyId links it to the crop variety too,
+    so it also goes before the variety), then variety, then asset, then
+    farmer, then stop the project's execution, and finally delete the plan
+    type last of all, once every other record is already gone (per the
+    user's specified order). The filled form has no delete API, so it stays
+    behind. Results go into _CLEANUP_LOG for the separate "Cleanup" report
     section (see pytest_html_results_summary above), not the normal
     pass/fail rows.
 
     Each step only runs if that entity's own create() call actually
-    succeeded (status 201) THIS run — ids are extracted from the raw
-    responses in _CREATED_RECORDS below, never from a test-data placeholder.
+    succeeded (status 201 — 200 for the plan, and 200 or 201 for the form,
+    whose create status isn't confirmed) THIS run — ids are extracted from
+    the raw responses in _CREATED_RECORDS below, never from a test-data
+    placeholder.
 
     Deliberately takes NO business-data fixtures as parameters — only the
     plain service fixtures (which never raise). The actual create responses
@@ -1011,7 +1254,10 @@ def cleanup_created_records(
     so a 200 alone isn't enough — see _record_bulk_delete. Plan/plan type
     only ever had their URL given, not a sample delete response, so those
     two are judged by status + absence of an error in the body instead —
-    see _record_delete_by_status.
+    see _record_delete_by_status. The form delete is the same URL shape but
+    reports `{"nonDeletedIds": [...], "deletedIds": [...]}`, judged by the
+    id being in deletedIds with nothing in nonDeletedIds — see
+    _record_delete_by_ids.
 
     The whole teardown can be turned off via test data —
     settings.cleanup.enabled in test_data/<env>.json — without touching
@@ -1029,6 +1275,17 @@ def cleanup_created_records(
 
     def _created(response):
         return response is not None and response.status == 201
+
+    def _extract_form_id(response):
+        # Form create() accepts 200 or 201 (the real status isn't confirmed),
+        # so — unlike _extract_id — a 200 counts too, as long as it has an id.
+        if response is None or response.status not in (200, 201):
+            return None
+        try:
+            body = response.json()
+        except ValueError:
+            return None
+        return body.get("id") if isinstance(body, dict) else None
 
     def _extract_plan_id(response):
         # Plan create() is the odd one out — 200, not 201, and the body is
@@ -1055,6 +1312,7 @@ def cleanup_created_records(
     created_crop_variety = _CREATED_RECORDS.get("crop_variety")
     created_plantype = _CREATED_RECORDS.get("plantype")
     created_plan = _CREATED_RECORDS.get("plan")
+    created_form = _CREATED_RECORDS.get("form")
     probable_assets_response = _CREATED_RECORDS.get("probable_assets") or {}
     self_validate_response = _CREATED_RECORDS.get("self_validate") or {}
 
@@ -1064,6 +1322,7 @@ def cleanup_created_records(
     created_crop_variety_id = _extract_id(created_crop_variety)
     created_plantype_id = _extract_id(created_plantype)
     created_plan_id = _extract_plan_id(created_plan)
+    created_form_id = _extract_form_id(created_form)
     project_asset_ids = probable_assets_response.get("projectAssetIds") or []
     croppable_area_ids = self_validate_response.get("croppableAreaIds") or []
 
@@ -1141,7 +1400,24 @@ def cleanup_created_records(
             "plan", created_plan_id, note="Skipped — creation failed this run, no real record to delete"
         )
 
-    # 3. Delete crop variety — DELETE {resource_path}/bulk?ids=... (bulk-delete shape).
+    # 3. Delete the form — DELETE /services/form/api/forms/bulk?ids=<id>.
+    # Its varietyId links it to the crop variety, so it has to be removed
+    # before the variety delete below (a variety still referenced by a form
+    # can't be deleted). The body is {"nonDeletedIds": [...], "deletedIds":
+    # [...]}, a different shape from the farmer/asset/variety deletes, so it
+    # has its own check (see _record_delete_by_ids). Skipped if the form was
+    # never actually created this run. The filled form has no delete API and
+    # stays behind.
+    if created_form_id is not None:
+        step_start = _log_len()
+        response = form_service.delete_bulk([created_form_id])
+        _record_delete_by_ids("form", created_form_id, response, calls=_calls_since(step_start))
+    else:
+        _record_cleanup(
+            "form", created_form_id, note="Skipped — creation failed this run, no real record to delete"
+        )
+
+    # 4. Delete crop variety — DELETE {resource_path}/bulk?ids=... (bulk-delete shape).
     # Skipped if the variety was never actually created this run.
     if _created(created_crop_variety):
         step_start = _log_len()
@@ -1153,7 +1429,7 @@ def cleanup_created_records(
             note="Skipped — creation failed this run, no real record to delete",
         )
 
-    # 4. Delete asset — DELETE {resource_path}/bulk?ids=... (bulk-delete shape).
+    # 5. Delete asset — DELETE {resource_path}/bulk?ids=... (bulk-delete shape).
     # Skipped if the asset was never actually created this run.
     if _created(created_asset):
         step_start = _log_len()
@@ -1164,7 +1440,7 @@ def cleanup_created_records(
             "asset", created_asset_id, note="Skipped — creation failed this run, no real record to delete"
         )
 
-    # 5. Delete farmer — DELETE {resource_path}/bulk?ids=... (bulk-delete shape).
+    # 6. Delete farmer — DELETE {resource_path}/bulk?ids=... (bulk-delete shape).
     # Skipped if the farmer was never actually created this run.
     if _created(created_farmer):
         step_start = _log_len()
@@ -1175,7 +1451,7 @@ def cleanup_created_records(
             "farmer", created_farmer_id, note="Skipped — creation failed this run, no real record to delete"
         )
 
-    # 6. Stop the project's execution. Skipped if the project was never
+    # 7. Stop the project's execution. Skipped if the project was never
     # actually created this run.
     if not project_created:
         _record_cleanup(
@@ -1201,7 +1477,7 @@ def cleanup_created_records(
                 success=success, note=None if success else f"final: {final}", calls=_calls_since(step_start),
             )
 
-    # 7. Delete plan type — DELETE {resource_path}/bulk?ids=... . Last step
+    # 8. Delete plan type — DELETE {resource_path}/bulk?ids=... . Last step
     # of all, run only once every other record above is already cleaned
     # up. Success is judged by status + no error in the body (see
     # _record_delete_by_status), same reasoning as the plan step above.

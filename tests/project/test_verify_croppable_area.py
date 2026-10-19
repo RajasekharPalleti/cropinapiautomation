@@ -1,7 +1,6 @@
 import pytest
 
 from src.core.response_validator import assert_status
-from src.utils.test_data_loader import load_test_data
 
 
 @pytest.mark.project
@@ -48,7 +47,12 @@ def test_verify_croppable_area_variety_and_sowing_date(
 @pytest.mark.sanity
 @pytest.mark.regression
 def test_verify_plan_type_tasks_pulled_to_croppable_area(
-    project_service, croppable_area_ids, croppable_area_update_response, created_plan_id, plantype_update_response
+    project_service,
+    croppable_area_ids,
+    croppable_area_update_response,
+    created_plan,
+    created_plan_id,
+    plantype_update_response,
 ):
     """The variety assigned to this croppable area (test_update_croppable_area.py)
     already has a plan (test_add_plan.py) linking it to a plan type. Once
@@ -86,7 +90,9 @@ def test_verify_plan_type_tasks_pulled_to_croppable_area(
     # Dates are compared by calendar day only — the plan's schedule stores
     # them with milliseconds ("...T00:00:00.000Z"), the task response
     # doesn't ("...T00:00:00Z"), same instant either way.
-    expected_dates = {d[:10] for d in load_test_data("plan", "create_valid")["fixed_execution_dates"]}
+    # The dates the plan was actually created with (they're relative to the
+    # day of the run — see plan.create_valid.fixed_execution_day_offsets).
+    expected_dates = {d[:10] for d in created_plan["payload"]["schedule"]["fixedExecutionDates"]}
     actual_dates = {task.get("startDate", "")[:10] for task in matching_tasks}
     assert actual_dates == expected_dates, f"Expected task dates {sorted(expected_dates)}, got {sorted(actual_dates)}"
 

@@ -19,6 +19,12 @@ markers = [
     "crop_variety: crop variety module tests",
     "project: project module tests",
     "plan: plan module tests",
+    "task: task module tests",
+    "task_fill: task fill scenarios (POST /services/farm/api/tasks) — all of tests/task/test_task_fill_*.py",
+    "form: form module tests (form creation, update and fill, tests/form/)",
+    "boundary: boundary-value scenarios",
+    "integrity: data-integrity scenarios (what was sent is what got stored)",
+    "security: authentication/authorization/injection scenarios",
 ]
 
 [tool.black]

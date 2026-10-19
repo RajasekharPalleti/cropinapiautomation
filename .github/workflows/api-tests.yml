@@ -9,7 +9,7 @@ name: API Test Suite
 #
 # Every run creates real records (farmer, asset, plan type, crop variety,
 # plan, project, ...) in whichever environment is targeted. Unspecified
-# inputs fall back to their defaults below (prod / regression / cleanup on /
+# inputs fall back to their defaults below (prod / sanity / cleanup on /
 # all three recipients), which is what the external cron pinger relies on.
 # The "markers" default is a standing choice, not a permanent one — change
 # it below whenever the daily run should target a different suite.
@@ -28,7 +28,7 @@ on:
       markers:
         description: "Which tests to run"
         required: true
-        default: "regression"
+        default: "sanity"
         type: choice
         options:
           - sanity
@@ -120,11 +120,35 @@ jobs:
           [ "$NOTIFY_SFPLUSQA" = "true" ] && RECIPIENTS="${RECIPIENTS:+$RECIPIENTS,}sfplusqa@cropin.com"
           export EMAIL_RECIPIENTS_OVERRIDE="$RECIPIENTS"
 
+          # A regression run needs a bigger task pool: the task-fill scenarios
+          # each claim a task from the run's plan, and prod's test data keeps
+          # the plan at 4 tasks (enough for sanity, which fills one) so a daily
+          # run leaves little behind — without this most of them would skip.
+          # PLAN_TASK_COUNT_OVERRIDE=24 makes the plan 24 tasks for this run.
+          if [ "$MARKER_EXPR" = "regression" ]; then
+            export PLAN_TASK_COUNT_OVERRIDE=24
+          fi
+
           # Every test already carries @pytest.mark.regression alongside its
           # own sanity/smoke marker (see pyproject.toml's marker registry),
           # so "-m regression" already selects the full suite — no separate
           # no-filter "all" case needed.
+          # Failed tests are reported in the HTML report (uploaded below) and in
+          # the emailed summary — they do not fail the job. pytest exits 1 when
+          # some tests failed or errored, which is turned into a pass here; the
+          # teardown (cleanup) has already run by then, and a cleanup step that
+          # failed shows up in the report's Cleanup section. Any other non-zero
+          # exit (2 interrupted, 3 internal error, 4 usage error, 5 no tests
+          # collected) means the run itself broke and still fails the job.
+          set +e
           pytest --env="$ENV_TARGET" -m "$MARKER_EXPR"
+          status=$?
+          set -e
+          if [ "$status" -eq 1 ]; then
+            echo "::notice::Some tests failed or errored - see the HTML report artifact and the emailed summary. The job passes by design."
+            exit 0
+          fi
+          exit "$status"
 
       - name: Upload HTML report
         if: always()

@@ -18,6 +18,42 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+def format_results_summary(results: list[dict], max_reason_chars: int = 200) -> str:
+    """The email body's result block: how many tests ran / passed / failed
+    (and errored, skipped), then every failed or errored test case by name
+    with the first line of why (pytest's own "assert x == y / where ..." lines
+    below it are left out). `results` is conftest.py's run log — one
+    dict per recorded outcome: {"test": nodeid, "outcome": passed | failed |
+    error | skipped | xfailed | xpassed, "reason": str}. A teardown error on
+    a test that already passed is its own entry (pytest reports it the same
+    way), so the tally can add up to more than the number of tests."""
+    counts = {key: 0 for key in ("passed", "failed", "error", "skipped", "xfailed", "xpassed")}
+    for result in results:
+        counts[result["outcome"]] += 1
+    tests_run = len({result["test"] for result in results})
+
+    line = (
+        f"Result: {tests_run} tests run - {counts['passed']} passed, {counts['failed']} failed, "
+        f"{counts['error']} errors, {counts['skipped']} skipped"
+    )
+    if counts["xfailed"] or counts["xpassed"]:
+        line += f" ({counts['xfailed']} expected failures, {counts['xpassed']} unexpected passes)"
+    line += "."
+
+    broken = [result for result in results if result["outcome"] in ("failed", "error")]
+    if not broken:
+        return f"{line}\nFailed test cases: none."
+
+    lines = [line, f"Failed test cases ({len(broken)}):"]
+    for number, result in enumerate(broken, start=1):
+        reason = next((text.strip() for text in (result.get("reason") or "").splitlines() if text.strip()), "")
+        if len(reason) > max_reason_chars:
+            reason = reason[: max_reason_chars - 3] + "..."
+        label = result["test"] if result["outcome"] == "failed" else f"{result['test']} [error]"
+        lines.append(f"{number}. {label}" + (f" - {reason}" if reason else ""))
+    return "\n".join(lines)
+
+
 def send_report_email(
     settings: Settings, report_path: Path, recipients: list[str], summary_text: str = ""
 ) -> None:

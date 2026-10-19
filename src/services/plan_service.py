@@ -8,6 +8,8 @@ resolved create-first/test-data-fallback by the caller (see
 created_plantype_id / created_crop_variety_id fixtures in tests/conftest.py).
 """
 import json as json_lib
+import os
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from src.core.response_wrapper import ApiResponse
@@ -65,7 +67,22 @@ class PlanService(BaseService):
             payload["data"]["information"]["planName"] = unique_name
             payload["name"] = unique_name
 
-        if "fixed_execution_dates" in test_data:
+        if "fixed_execution_day_offsets" in test_data:
+            # Days relative to today (UTC), midnight — so the plan's tasks
+            # always sit in a window the task-fill tests can fill into
+            # (execution day = today + N), no matter when the suite runs.
+            offsets = test_data["fixed_execution_day_offsets"]
+            # PLAN_TASK_COUNT_OVERRIDE=N makes the plan N tasks (days 0..N-1) for
+            # one run, e.g. a full regression on an env whose test data keeps the
+            # plan small to leave little data behind.
+            task_count = os.getenv("PLAN_TASK_COUNT_OVERRIDE")
+            if task_count:
+                offsets = list(range(int(task_count)))
+            today = datetime.now(timezone.utc).date()
+            payload["schedule"]["fixedExecutionDates"] = [
+                f"{today + timedelta(days=offset)}T00:00:00.000Z" for offset in offsets
+            ]
+        elif "fixed_execution_dates" in test_data:
             payload["schedule"]["fixedExecutionDates"] = test_data["fixed_execution_dates"]
 
         return payload

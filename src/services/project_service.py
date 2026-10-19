@@ -132,15 +132,20 @@ class ProjectService(BaseService):
         """GET /services/farm/api/croppable-areas/{croppable_area_id}."""
         return self._client.get(f"{CROPPABLE_AREAS_PATH}/{croppable_area_id}", **kwargs)
 
-    def list_tasks_for_croppable_area(self, croppable_area_id: Any, **kwargs: Any) -> ApiResponse:
+    def list_tasks_for_croppable_area(
+        self, croppable_area_id: Any, size: int = 200, **kwargs: Any
+    ) -> ApiResponse:
         """GET /services/farm/api/tasks/croppablearea/{croppable_area_id}
-        ?sort=lastModifiedDate,desc — the tasks generated on this croppable
-        area from its variety's plan, each carrying its own planId and
-        planTypeName. Used to verify the plan type actually pulled through
-        to the croppable area once the variety was assigned to it."""
+        ?sort=lastModifiedDate,desc&size=... — the tasks generated on this
+        croppable area from its variety's plan, each carrying its own id,
+        planId and planTypeName. Used to verify the plan type actually
+        pulled through to the croppable area once the variety was assigned
+        to it, and as the pool of tasks the task-fill tests pick from.
+        `size` is asked for explicitly so a plan with many fixed dates
+        isn't silently cut off at a paged endpoint's default page size."""
         return self._client.get(
             f"{TASKS_CROPPABLE_AREA_PATH}/{croppable_area_id}",
-            params={"sort": "lastModifiedDate,desc"},
+            params={"sort": "lastModifiedDate,desc", "size": size},
             **kwargs,
         )
 

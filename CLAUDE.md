@@ -10,7 +10,7 @@ Whenever the user hands over an API (endpoint/method/payload/test type) to add a
 
 When the user hands over a new API to wire into the framework (endpoint, method, payload, test type), **do not write any service/test-data/model/test code until the input validates against `intake/spec_schema.py::ApiIntakeSpec`** (or `ApiIntakeBatch` for several scenarios at once).
 
-Required per scenario: `module` (one of `login`/`farmer`/`asset`/`plantype`/`crop_variety`/`project`), `scenario_name`, `endpoint` (relative path starting with `/`), `method`, `test_type` (`sanity`/`smoke`/`regression`), `expected_status`, and `payload` (non-empty for POST/PUT/PATCH). `negative: true` requires `expected_status >= 400`.
+Required per scenario: `module` (one of `login`/`farmer`/`asset`/`plantype`/`crop_variety`/`project`/`plan`/`task`/`form` — `intake/spec_schema.py::KNOWN_MODULES` is the live list), `scenario_name`, `endpoint` (relative path starting with `/`), `method`, `test_type` (`sanity`/`smoke`/`regression`), `expected_status`, and `payload` (non-empty for POST/PUT/PATCH). `negative: true` requires `expected_status >= 400`.
 
 Steps:
 1. Build the `ApiIntakeSpec`/`ApiIntakeBatch` mentally (or actually run `python -m intake.validate_from_file <file>` if the user gave you a JSON file) from what was provided.

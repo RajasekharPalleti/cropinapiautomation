@@ -1,7 +1,7 @@
 """Validated schema for onboarding a real API into the test framework.
 
 Whenever a new endpoint/payload/test-type is handed over for login/farmer/asset/
-plantype/crop_variety/project/plan, it must first pass this schema — module,
+plantype/crop_variety/project/plan/task/form, it must first pass this schema — module,
 endpoint, method, test_type, scenario_name, payload, and expected_status all
 present and mutually consistent — before any service, test data, or test code
 gets written. See README section 6 ("Intake workflow") and CLAUDE.md for the
@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field, model_validator
 
 # Kept in sync by hand with: pyproject.toml markers, src/services/*_service.py,
 # tests/*/ folders, and the module sections in test_data/<env>.json.
-KNOWN_MODULES = ("login", "farmer", "asset", "plantype", "crop_variety", "project", "plan")
+KNOWN_MODULES = ("login", "farmer", "asset", "plantype", "crop_variety", "project", "plan", "task", "form")
 KNOWN_TEST_TYPES = ("sanity", "smoke", "regression")
 KNOWN_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 
@@ -21,7 +21,9 @@ BODY_METHODS = {"POST", "PUT", "PATCH"}
 
 
 class ApiIntakeSpec(BaseModel):
-    module: Literal["login", "farmer", "asset", "plantype", "crop_variety", "project", "plan"] = Field(
+    module: Literal[
+        "login", "farmer", "asset", "plantype", "crop_variety", "project", "plan", "task", "form"
+    ] = Field(
         ..., description="Which service/test_data section this scenario belongs to"
     )
     scenario_name: str = Field(

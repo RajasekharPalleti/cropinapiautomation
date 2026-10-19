@@ -16,6 +16,7 @@ disturb them.
 import pytest
 
 from src.utils.test_data_loader import load_test_data
+from tests.conftest import register_created_form
 from tests.form.form_asserts import assert_rejected
 
 pytestmark = [pytest.mark.form, pytest.mark.negative, pytest.mark.regression]
@@ -25,11 +26,16 @@ UNKNOWN_FORM_ID = 999999999
 
 def test_create_form_blank_name_rejected(form_service, created_crop_variety_id):
     """TC_FORM_004 — the normal create body, but with name "": must be refused
-    (4xx, not a server error) and must not return a new form id."""
+    (4xx, not a server error) and must not return a new form id. If the server
+    accepts it anyway the test fails — and the form it created is still deleted
+    by the end-of-run cleanup."""
     payload = form_service.build_create_payload(load_test_data("form", "create_valid"), created_crop_variety_id)
     payload["name"] = ""
 
     response = form_service.create(payload)
+    # The real server accepts a blank name (201) — that form exists whatever the
+    # assertion below says, so register it for deletion BEFORE asserting.
+    register_created_form(response, "TC-FORM-004 blank name")
 
     assert_rejected(
         response, load_test_data("form", "expectations")["TC_FORM_004"], "TC_FORM_004 (create with a blank name)"

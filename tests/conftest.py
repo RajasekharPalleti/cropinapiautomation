@@ -72,6 +72,28 @@ _CALLS_BY_FIXTURE: dict[str, list[dict]] = {}
 # fixture graph entirely.
 _CREATED_RECORDS: dict = {}
 
+# Forms a test created as a side effect rather than as the run's shared form —
+# e.g. TC-FORM-004, whose blank-named create the real server wrongly accepts
+# (201). Filled by register_created_form; cleanup_created_records deletes them.
+_EXTRA_FORMS: list[dict] = []
+
+
+def register_created_form(response, label: str) -> None:
+    """Marks the form a create() response produced for deletion at the end of
+    the run. Call it BEFORE asserting on the response: if the server accepted
+    a request it should have refused, the form exists whatever the assertion
+    says, and it has to be cleaned up. Does nothing when the response isn't a
+    2xx create with an id (nothing was created)."""
+    if response is None or response.status not in (200, 201):
+        return
+    try:
+        body = response.json()
+    except ValueError:
+        return
+    form_id = body.get("id") if isinstance(body, dict) else None
+    if isinstance(form_id, int):
+        _EXTRA_FORMS.append({"id": form_id, "label": label})
+
 
 def tracked_fixture(fixture_func):
     """Decorator for a fixture whose body makes ApiClient calls — records
@@ -1220,6 +1242,10 @@ def cleanup_created_records(
     section (see pytest_html_results_summary above), not the normal
     pass/fail rows.
 
+    Forms that a test created by accident (register_created_form — e.g. the
+    blank-named form TC-FORM-004 gets back when the server wrongly accepts it)
+    are deleted right after the shared form, one Cleanup row each.
+
     Every step runs inside _guarded, so a step that raises (network error,
     unexpected body, ...) is recorded as a failed Cleanup row and the
     remaining steps still run — a failed cleanup shows in the report and never
@@ -1441,6 +1467,18 @@ def cleanup_created_records(
         _record_cleanup(
             "form", created_form_id, note="Skipped — creation failed this run, no real record to delete"
         )
+
+    # 3b. Forms a test created as a side effect (see register_created_form):
+    # a negative test whose request the server wrongly accepted — TC-FORM-004's
+    # blank-named form comes back 201 — leaves a real form behind whatever its
+    # assertion said. It carries the run's varietyId too, so it is deleted here,
+    # before the variety, one DELETE and one Cleanup row each.
+    for extra_form in _EXTRA_FORMS:
+        extra_entity = f"form ({extra_form['label']})"
+        with _guarded(extra_entity, extra_form["id"]):
+            step_start = _log_len()
+            response = form_service.delete_bulk([extra_form["id"]])
+            _record_delete_by_ids(extra_entity, extra_form["id"], response, calls=_calls_since(step_start))
 
     # 4. Delete crop variety — DELETE {resource_path}/bulk?ids=... (bulk-delete shape).
     # Skipped if the variety was never actually created this run.

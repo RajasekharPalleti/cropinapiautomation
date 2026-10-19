@@ -6,7 +6,6 @@ from src.utils.test_data_loader import load_test_data
 
 @pytest.mark.project
 @pytest.mark.sanity
-@pytest.mark.smoke
 @pytest.mark.regression
 def test_verify_croppable_area_created(project_service, croppable_area_ids):
     assert croppable_area_ids, "No croppableAreaIds to verify"
@@ -23,7 +22,6 @@ def test_verify_croppable_area_created(project_service, croppable_area_ids):
 
 @pytest.mark.project
 @pytest.mark.sanity
-@pytest.mark.smoke
 @pytest.mark.regression
 def test_verify_croppable_area_variety_and_sowing_date(
     project_service, croppable_area_ids, created_crop_variety_id, croppable_area_update_response
@@ -48,7 +46,6 @@ def test_verify_croppable_area_variety_and_sowing_date(
 
 @pytest.mark.project
 @pytest.mark.sanity
-@pytest.mark.smoke
 @pytest.mark.regression
 def test_verify_plan_type_tasks_pulled_to_croppable_area(
     project_service, croppable_area_ids, croppable_area_update_response, created_plan_id, plantype_update_response

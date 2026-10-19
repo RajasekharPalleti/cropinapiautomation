@@ -3,7 +3,6 @@ import pytest
 
 @pytest.mark.plantype
 @pytest.mark.sanity
-@pytest.mark.smoke
 @pytest.mark.regression
 def test_edit_plantype_updates_name(plantype_update_response):
     """Asserts directly on the shared plantype_update_response fixture (see

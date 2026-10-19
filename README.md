@@ -130,9 +130,10 @@ pytest --env=qa
 pytest --env=uat
 pytest --env=prod
 
-# Only sanity / smoke / regression tests
+# Only sanity / regression tests (smoke is registered in pyproject.toml
+# but not currently applied to any test — removed for now, kept easy to
+# bring back)
 pytest -m sanity
-pytest -m smoke
 pytest -m regression
 
 # Just the auth module, against UAT
@@ -141,8 +142,8 @@ pytest tests/auth -v --env=uat
 # Only the farmer module once it has tests
 pytest -m farmer
 
-# Combine module + test type, e.g. farmer smoke tests only
-pytest -m "farmer and smoke"
+# Combine module + test type, e.g. farmer regression tests only
+pytest -m "farmer and regression"
 
 # Parallel run
 pytest -n 4
@@ -153,7 +154,7 @@ pytest -n 4
 # "Environment" metadata row and title reflect the env it was run against.
 ```
 
-Markers available (defined in `pyproject.toml`): `sanity`, `smoke`, `regression`, `auth`, `negative`, `farmer`, `asset`, `plantype`, `crop_variety`, `project`. Every test carries exactly one module marker plus one test-type marker (`sanity`/`smoke`/`regression`), and `negative` on top of that where it applies — so `pytest -m "farmer and regression"` or `pytest -m "asset and negative"` always work.
+Markers available (defined in `pyproject.toml`): `sanity`, `smoke`, `regression`, `auth`, `negative`, `farmer`, `asset`, `plantype`, `crop_variety`, `project`. Every test carries exactly one module marker plus its test-type marker(s) — currently `sanity` + `regression` together for happy-path tests, `regression` alone for negative-path tests (`smoke` is registered but not currently applied to any test — see the note above) — and `negative` on top where it applies, so `pytest -m "farmer and regression"` or `pytest -m "asset and negative"` always work.
 
 ---
 
@@ -282,7 +283,7 @@ That's the entire one-time setup — no other configuration (branch protection, 
 
 ### 8.2 Triggering a run
 
-GitHub → **Actions** tab → **"API Test Suite"** → **"Run workflow"** button → pick an environment (qa/uat/prod) and optionally a marker expression (e.g. `smoke`, `sanity`, `regression`, `farmer and smoke`) to run a subset → **Run workflow**. The HTML report (`reports/report_<env>.html`) is uploaded as a build artifact on every run, pass or fail — find it at the bottom of that run's summary page under "Artifacts".
+GitHub → **Actions** tab → **"API Test Suite"** → **"Run workflow"** button → pick an environment (qa/uat/prod) and a markers option (`sanity` or `regression` — `smoke` isn't currently offered here, since no test carries that marker right now) → **Run workflow**. The HTML report (`reports/report_<env>.html`) is uploaded as a build artifact on every run, pass or fail — find it at the bottom of that run's summary page under "Artifacts".
 
 ### 8.3 Setting up the emailed report (prod only)
 

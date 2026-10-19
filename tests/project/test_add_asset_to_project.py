@@ -3,7 +3,6 @@ import pytest
 
 @pytest.mark.project
 @pytest.mark.sanity
-@pytest.mark.smoke
 @pytest.mark.regression
 def test_add_asset_to_project_success(probable_assets_response):
     """probable_assets_response performs the actual probable-assets call

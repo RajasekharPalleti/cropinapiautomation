@@ -3,7 +3,6 @@ import pytest
 
 @pytest.mark.project
 @pytest.mark.sanity
-@pytest.mark.smoke
 @pytest.mark.regression
 def test_validate_project_assets_success(self_validate_response):
     """self_validate_response performs the actual self-validate-project-assets

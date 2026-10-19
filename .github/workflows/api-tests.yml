@@ -32,7 +32,6 @@ on:
         type: choice
         options:
           - sanity
-          - smoke
           - regression
       cleanup:
         description: "Run the teardown (delete the records this run creates)?"

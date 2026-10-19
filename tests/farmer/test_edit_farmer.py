@@ -5,7 +5,6 @@ from src.core.response_validator import assert_status
 
 @pytest.mark.farmer
 @pytest.mark.sanity
-@pytest.mark.smoke
 @pytest.mark.regression
 def test_edit_farmer_updates_first_name(farmer_service, created_farmer_id):
     """Fetch a freshly created farmer, append a timestamp to firstName, and

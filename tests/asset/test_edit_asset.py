@@ -5,7 +5,6 @@ from src.core.response_validator import assert_status
 
 @pytest.mark.asset
 @pytest.mark.sanity
-@pytest.mark.smoke
 @pytest.mark.regression
 def test_edit_asset_updates_name(asset_service, created_asset_id):
     """Fetch the shared asset, append a timestamp to name, and PUT the

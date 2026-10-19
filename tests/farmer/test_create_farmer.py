@@ -5,7 +5,6 @@ from src.core.response_validator import assert_status
 
 @pytest.mark.farmer
 @pytest.mark.sanity
-@pytest.mark.smoke
 @pytest.mark.regression
 def test_create_farmer_success(created_farmer):
     """created_farmer performs the one farmer create() call for the whole

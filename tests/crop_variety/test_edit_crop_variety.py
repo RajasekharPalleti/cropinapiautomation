@@ -5,7 +5,6 @@ from src.core.response_validator import assert_status
 
 @pytest.mark.crop_variety
 @pytest.mark.sanity
-@pytest.mark.smoke
 @pytest.mark.regression
 def test_edit_crop_variety_updates_name(crop_variety_service, created_crop_variety_id):
     """Fetch a freshly created crop variety, append a timestamp to name, and

@@ -3,7 +3,6 @@ import pytest
 
 @pytest.mark.project
 @pytest.mark.sanity
-@pytest.mark.smoke
 @pytest.mark.regression
 def test_add_variety_and_sowing_date_to_croppable_area(created_crop_variety_id, croppable_area_update_response):
     """Asserts directly on the shared croppable_area_update_response fixture

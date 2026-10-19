@@ -5,7 +5,6 @@ from src.core.response_validator import assert_status
 
 @pytest.mark.crop_variety
 @pytest.mark.sanity
-@pytest.mark.smoke
 @pytest.mark.regression
 def test_create_crop_variety_success(created_crop_variety, crop_variety_additional_attributes_response):
     """created_crop_variety and crop_variety_additional_attributes_response

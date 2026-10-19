@@ -5,7 +5,6 @@ from src.core.response_validator import assert_status
 
 @pytest.mark.project
 @pytest.mark.sanity
-@pytest.mark.smoke
 @pytest.mark.regression
 def test_execute_project_completes(project_service, created_project_id, self_validate_response):
     """Triggers execution on the shared project and polls until the async

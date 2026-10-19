@@ -7,7 +7,6 @@ from src.utils.test_data_loader import load_test_data
 
 
 @pytest.mark.sanity
-@pytest.mark.smoke
 @pytest.mark.regression
 @pytest.mark.auth
 def test_generate_token_success(auth_service):
@@ -25,7 +24,6 @@ def test_generate_token_success(auth_service):
 
 
 @pytest.mark.sanity
-@pytest.mark.smoke
 @pytest.mark.regression
 @pytest.mark.auth
 def test_generate_token_stores_tokens_on_session(auth_service, session_context):

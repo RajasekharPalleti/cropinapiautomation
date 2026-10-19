@@ -113,9 +113,10 @@ def assert_rejected(response, allowed: list, what: str) -> None:
     and/or classes like '4xx' — form.expectations in test data, frozen to the
     exact code after the first real run), and the body carries no id, i.e. no
     record was created. A 2xx means the server accepted a request it should
-    have refused (and may have created a record); a 5xx is a server error, not
-    a validation failure — both fail the status check with the actual status
-    and the body."""
+    have refused (and may have created a record), and a status outside `allowed`
+    fails — so a 5xx fails unless the scenario lists it (TC_FORM_005 lists 500,
+    the real server's answer for an unknown form). The failure message always
+    carries the actual status and the body."""
     status = response.status
     accepted = " — DEFECT: the request was accepted and may have created a record" if 200 <= status < 300 else ""
     assert status_allowed(status, allowed), (

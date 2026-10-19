@@ -318,7 +318,7 @@ ROWS = [
      "(`test_create_form_blank_name_rejected`) Negative: the normal create body (shared crop variety) with name \"\" is rejected with a 4xx (not a server error) and the response carries no new form id. The exact code is frozen in test data (form.expectations) after the first real run; a 2xx fails the test.",
      "POST /services/form/api/forms"),
     ("TC-FORM-005", "Form Fill - Form Does Not Exist", "Regression",
-     "(`test_fill_form_unknown_form_id_rejected`) Negative: the normal fill body for the shared farmer with formId 999999999 is rejected with a 4xx (not a server error) and the response carries no filled-form id. The exact code is frozen in test data (form.expectations) after the first real run; a 2xx fails the test.",
+     "(`test_fill_form_unknown_form_id_rejected`) Negative: the normal fill body for the shared farmer with formId 999999999 is rejected — with a 4xx, or the 500 the real server returns for an unknown form id (both allowed in test data, form.expectations) — and the response carries no filled-form id. A 2xx fails the test.",
      "GET /services/farm/api/farmers/{id}\nPOST /services/form/api/filled-forms"),
 
     # --- CLEANUP (teardown steps in tests/conftest.py's cleanup_created_records

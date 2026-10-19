@@ -1,4 +1,5 @@
 import base64
+import contextlib
 import functools
 import inspect
 import json
@@ -1219,6 +1220,11 @@ def cleanup_created_records(
     section (see pytest_html_results_summary above), not the normal
     pass/fail rows.
 
+    Every step runs inside _guarded, so a step that raises (network error,
+    unexpected body, ...) is recorded as a failed Cleanup row and the
+    remaining steps still run — a failed cleanup shows in the report and never
+    aborts the rest of the teardown.
+
     Each step only runs if that entity's own create() call actually
     succeeded (status 201 — 200 for the plan, and 200 or 201 for the form,
     whose create status isn't confirmed) THIS run — ids are extracted from
@@ -1306,6 +1312,22 @@ def cleanup_created_records(
     def _calls_since(start):
         return _LAST_API_CLIENT.call_log[start:] if _LAST_API_CLIENT is not None else []
 
+    @contextlib.contextmanager
+    def _guarded(entity_type, entity_id):
+        """Runs one cleanup step. If it raises (a network error, a body that
+        isn't JSON, anything unexpected) the failure is recorded as a failed
+        row in the report's Cleanup section and the teardown carries on with
+        the next step, instead of aborting — the remaining records still get
+        cleaned up, and nothing is hidden."""
+        step_start = _log_len()
+        try:
+            yield
+        except Exception as exc:
+            _record_cleanup(
+                entity_type, entity_id, success=False,
+                note=f"cleanup step raised {type(exc).__name__}: {exc}", calls=_calls_since(step_start),
+            )
+
     created_project = _CREATED_RECORDS.get("project")
     created_asset = _CREATED_RECORDS.get("asset")
     created_farmer = _CREATED_RECORDS.get("farmer")
@@ -1359,31 +1381,32 @@ def cleanup_created_records(
             note="Skipped — project creation failed this run, no real croppable area to clean up",
         )
     else:
-        step_start = _log_len()
-        close_response = project_service.close_croppable_areas(croppable_area_ids)
-        if close_response.status != 200:
-            _record_cleanup(
-                "croppable_area", croppable_area_ids, status=close_response.status, success=False,
-                note=f"close failed: {close_response.text()}", calls=_calls_since(step_start),
-            )
-        else:
-            remove_response = project_service.remove_project_assets(
-                created_project_id, project_asset_ids, croppable_area_ids
-            )
-            if remove_response.status != 202:
+        with _guarded("croppable_area", croppable_area_ids):
+            step_start = _log_len()
+            close_response = project_service.close_croppable_areas(croppable_area_ids)
+            if close_response.status != 200:
                 _record_cleanup(
-                    "croppable_area", croppable_area_ids, status=remove_response.status, success=False,
-                    note=f"remove failed: {remove_response.text()}", calls=_calls_since(step_start),
+                    "croppable_area", croppable_area_ids, status=close_response.status, success=False,
+                    note=f"close failed: {close_response.text()}", calls=_calls_since(step_start),
                 )
             else:
-                process_id = remove_response.json().get("id")
-                final = project_service.wait_for_execution_result(process_id)
-                failed_count = (final.get("message") or {}).get("failedCount", 0)
-                success = final.get("status") == "COMPLETED" and failed_count == 0
-                _record_cleanup(
-                    "croppable_area", croppable_area_ids, status=final.get("status"), success=success,
-                    note=None if success else f"final: {final}", calls=_calls_since(step_start),
+                remove_response = project_service.remove_project_assets(
+                    created_project_id, project_asset_ids, croppable_area_ids
                 )
+                if remove_response.status != 202:
+                    _record_cleanup(
+                        "croppable_area", croppable_area_ids, status=remove_response.status, success=False,
+                        note=f"remove failed: {remove_response.text()}", calls=_calls_since(step_start),
+                    )
+                else:
+                    process_id = remove_response.json().get("id")
+                    final = project_service.wait_for_execution_result(process_id)
+                    failed_count = (final.get("message") or {}).get("failedCount", 0)
+                    success = final.get("status") == "COMPLETED" and failed_count == 0
+                    _record_cleanup(
+                        "croppable_area", croppable_area_ids, status=final.get("status"), success=success,
+                        note=None if success else f"final: {final}", calls=_calls_since(step_start),
+                    )
 
     # 2. Delete the plan — DELETE {resource_path}/bulk?ids=... . Linked to
     # the crop variety (and plan type), so it has to be removed before the
@@ -1392,9 +1415,10 @@ def cleanup_created_records(
     # deletable/nonDeletable shape, since only the URL was given for this
     # one. Skipped if the plan was never actually created this run.
     if created_plan_id is not None:
-        step_start = _log_len()
-        response = plan_service.delete_bulk([created_plan_id])
-        _record_delete_by_status("plan", created_plan_id, response, calls=_calls_since(step_start))
+        with _guarded("plan", created_plan_id):
+            step_start = _log_len()
+            response = plan_service.delete_bulk([created_plan_id])
+            _record_delete_by_status("plan", created_plan_id, response, calls=_calls_since(step_start))
     else:
         _record_cleanup(
             "plan", created_plan_id, note="Skipped — creation failed this run, no real record to delete"
@@ -1409,9 +1433,10 @@ def cleanup_created_records(
     # never actually created this run. The filled form has no delete API and
     # stays behind.
     if created_form_id is not None:
-        step_start = _log_len()
-        response = form_service.delete_bulk([created_form_id])
-        _record_delete_by_ids("form", created_form_id, response, calls=_calls_since(step_start))
+        with _guarded("form", created_form_id):
+            step_start = _log_len()
+            response = form_service.delete_bulk([created_form_id])
+            _record_delete_by_ids("form", created_form_id, response, calls=_calls_since(step_start))
     else:
         _record_cleanup(
             "form", created_form_id, note="Skipped — creation failed this run, no real record to delete"
@@ -1420,9 +1445,10 @@ def cleanup_created_records(
     # 4. Delete crop variety — DELETE {resource_path}/bulk?ids=... (bulk-delete shape).
     # Skipped if the variety was never actually created this run.
     if _created(created_crop_variety):
-        step_start = _log_len()
-        response = crop_variety_service.delete_bulk([created_crop_variety_id])
-        _record_bulk_delete("crop_variety", created_crop_variety_id, response, calls=_calls_since(step_start))
+        with _guarded("crop_variety", created_crop_variety_id):
+            step_start = _log_len()
+            response = crop_variety_service.delete_bulk([created_crop_variety_id])
+            _record_bulk_delete("crop_variety", created_crop_variety_id, response, calls=_calls_since(step_start))
     else:
         _record_cleanup(
             "crop_variety", created_crop_variety_id,
@@ -1432,9 +1458,10 @@ def cleanup_created_records(
     # 5. Delete asset — DELETE {resource_path}/bulk?ids=... (bulk-delete shape).
     # Skipped if the asset was never actually created this run.
     if _created(created_asset):
-        step_start = _log_len()
-        response = asset_service.delete_bulk([created_asset_id])
-        _record_bulk_delete("asset", created_asset_id, response, calls=_calls_since(step_start))
+        with _guarded("asset", created_asset_id):
+            step_start = _log_len()
+            response = asset_service.delete_bulk([created_asset_id])
+            _record_bulk_delete("asset", created_asset_id, response, calls=_calls_since(step_start))
     else:
         _record_cleanup(
             "asset", created_asset_id, note="Skipped — creation failed this run, no real record to delete"
@@ -1443,9 +1470,10 @@ def cleanup_created_records(
     # 6. Delete farmer — DELETE {resource_path}/bulk?ids=... (bulk-delete shape).
     # Skipped if the farmer was never actually created this run.
     if _created(created_farmer):
-        step_start = _log_len()
-        response = farmer_service.delete_bulk([created_farmer_id])
-        _record_bulk_delete("farmer", created_farmer_id, response, calls=_calls_since(step_start))
+        with _guarded("farmer", created_farmer_id):
+            step_start = _log_len()
+            response = farmer_service.delete_bulk([created_farmer_id])
+            _record_bulk_delete("farmer", created_farmer_id, response, calls=_calls_since(step_start))
     else:
         _record_cleanup(
             "farmer", created_farmer_id, note="Skipped — creation failed this run, no real record to delete"
@@ -1459,23 +1487,24 @@ def cleanup_created_records(
             note="Skipped — project creation failed this run, nothing to stop",
         )
     else:
-        # Async, like start-execution: the POST only returns an IN_PROGRESS
-        # job id, so poll it to completion before recording success/failure.
-        step_start = _log_len()
-        stop_response = project_service.stop_execution(created_project_id)
-        if stop_response.status != 200:
-            _record_cleanup(
-                "project (stop-execution)", created_project_id, status=stop_response.status,
-                success=False, note=stop_response.text(), calls=_calls_since(step_start),
-            )
-        else:
-            stop_process_id = stop_response.json().get("id")
-            final = project_service.wait_for_execution_result(stop_process_id)
-            success = final.get("status") == "COMPLETED"
-            _record_cleanup(
-                "project (stop-execution)", created_project_id, status=final.get("status"),
-                success=success, note=None if success else f"final: {final}", calls=_calls_since(step_start),
-            )
+        with _guarded("project (stop-execution)", created_project_id):
+            # Async, like start-execution: the POST only returns an IN_PROGRESS
+            # job id, so poll it to completion before recording success/failure.
+            step_start = _log_len()
+            stop_response = project_service.stop_execution(created_project_id)
+            if stop_response.status != 200:
+                _record_cleanup(
+                    "project (stop-execution)", created_project_id, status=stop_response.status,
+                    success=False, note=stop_response.text(), calls=_calls_since(step_start),
+                )
+            else:
+                stop_process_id = stop_response.json().get("id")
+                final = project_service.wait_for_execution_result(stop_process_id)
+                success = final.get("status") == "COMPLETED"
+                _record_cleanup(
+                    "project (stop-execution)", created_project_id, status=final.get("status"),
+                    success=success, note=None if success else f"final: {final}", calls=_calls_since(step_start),
+                )
 
     # 8. Delete plan type — DELETE {resource_path}/bulk?ids=... . Last step
     # of all, run only once every other record above is already cleaned
@@ -1483,9 +1512,10 @@ def cleanup_created_records(
     # _record_delete_by_status), same reasoning as the plan step above.
     # Skipped if the plan type was never actually created this run.
     if _created(created_plantype):
-        step_start = _log_len()
-        response = plantype_service.delete_bulk([created_plantype_id])
-        _record_delete_by_status("plantype", created_plantype_id, response, calls=_calls_since(step_start))
+        with _guarded("plantype", created_plantype_id):
+            step_start = _log_len()
+            response = plantype_service.delete_bulk([created_plantype_id])
+            _record_delete_by_status("plantype", created_plantype_id, response, calls=_calls_since(step_start))
     else:
         _record_cleanup(
             "plantype", created_plantype_id, note="Skipped — creation failed this run, no real record to delete"

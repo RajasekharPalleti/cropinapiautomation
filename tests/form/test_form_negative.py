@@ -4,10 +4,12 @@ changes the one thing its scenario is about, and makes its own call (so the
 report shows it). (The unknown-form fill carries the form's created name, not
 its updated one — irrelevant for a form that doesn't exist.)
 
-The error codes weren't captured, so the allowed statuses are classes (4xx) in
-test data — form.expectations in test_data/<env>.json — to be edited to the
-exact codes seen after the first real run, with no code change. A 2xx fails
-the test: the server accepted something it should have refused. These run
+The allowed statuses live in test data — form.expectations in
+test_data/<env>.json. TC_FORM_004 allows any 4xx; TC_FORM_005 allows any 4xx
+and also 500, because that is what the real server answers for a form id it
+can't find ("Unable to find ...Form with id ...") — accepted as a refusal on
+purpose. A 2xx fails the test: the server accepted something it should have
+refused (the real server does exactly that for a blank form name). These run
 after the happy-path form tests so a request that is wrongly accepted can't
 disturb them.
 """
@@ -38,8 +40,9 @@ def test_fill_form_unknown_form_id_rejected(
     form_service, farmer_service, created_form, created_form_id, created_farmer, created_farmer_id
 ):
     """TC_FORM_005 — the normal fill body for the run's farmer, but formId is an
-    id that doesn't exist: must be refused (4xx, not a server error) and must
-    not return a filled-form id. created_form_id is requested so the test skips
+    id that doesn't exist: must be refused (a 4xx, or the 500 the real server
+    gives for an unknown form — see form.expectations) and must not return a
+    filled-form id. created_form_id is requested so the test skips
     when no form was created this run, like the fill test."""
     farmer_response = farmer_service.get_by_id(created_farmer_id)
     farmer_name = farmer_response.json().get("firstName") if farmer_response.status == 200 else None
